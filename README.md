@@ -15,7 +15,7 @@
 ② Parser      解析 proposal.md + tasks.md → WorkItem
 ③ DAG         depends_on → 拓扑排序 → blocked / ready
 ④ Scheduler   从 ready 中选一个（解锁度 → 优先级 → 风险）
-⑤ Compiler    httpx → 便宜 LLM → 精炼 proposal 为 task brief
+⑤ Compiler    LLM 精炼 proposal 为 task brief
 ⑥ Executor    Claude Code SDK → 实现 + lint + test → commit
 ⑦ Voters      httpx → N 个模型并行独立投票
 ⑧ Aggregate   risk_policy 汇总 → approved / rejected / needs_review
@@ -206,7 +206,7 @@ pending → blocked → ready → compiling → running → verifying
 
 - 项目内只有 `.specq/config.yaml` 一个入库文件
 - `rm -rf .specq/` → 项目零残留
-- 无全局目录，不写 `~/.specq/`
+- 无全局目录，所有状态都在项目 `.specq/` 内
 
 ## 开发
 
