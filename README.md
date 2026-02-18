@@ -207,7 +207,6 @@ pending → blocked → ready → compiling → running → verifying
 - 项目内只有 `.specq/config.yaml` 一个入库文件
 - `rm -rf .specq/` → 项目零残留
 - 无全局目录，不写 `~/.specq/`
-- 不写 artifacts 文件到项目中
 
 ## 开发
 
