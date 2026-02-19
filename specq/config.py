@@ -86,7 +86,7 @@ class NotifyConfig:
 
 @dataclass
 class Config:
-    changes_dir: str = "changes"
+    changes_dir: str = ""  # empty = auto-detect (prefers openspec/changes if present)
     base_branch: str = "main"
     compiler: CompilerConfig = field(default_factory=CompilerConfig)
     executor: ExecutorConfig = field(default_factory=ExecutorConfig)
@@ -96,6 +96,18 @@ class Config:
     notify: NotifyConfig = field(default_factory=NotifyConfig)
     providers: ProvidersConfig = field(default_factory=ProvidersConfig)
     project_root: str = ""
+
+
+# ---------------------------------------------------------------------------
+# OpenSpec auto-detection
+# ---------------------------------------------------------------------------
+
+def detect_changes_dir(project_root: Path) -> str:
+    """Return the changes directory path, preferring openspec/changes if it exists."""
+    openspec_changes = project_root / "openspec" / "changes"
+    if openspec_changes.is_dir():
+        return "openspec/changes"
+    return "changes"
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +251,10 @@ def load_config(project_root: str | Path) -> Config:
     # Merge
     merged = deep_merge(base_data, local_data)
     cfg = _dict_to_config(merged, str(project_root))
+
+    # Auto-detect changes_dir if not explicitly configured
+    if not cfg.changes_dir:
+        cfg.changes_dir = detect_changes_dir(project_root)
 
     # Layer 3: env vars override API keys (highest priority)
     env_anthropic = os.environ.get("ANTHROPIC_API_KEY")

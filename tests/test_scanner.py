@@ -144,3 +144,52 @@ def test_parse_tasks_empty():
     """Empty tasks.md → empty list."""
     tasks = parse_tasks("# Tasks\n")
     assert tasks == []
+
+
+# --- OpenSpec auto-detection ---
+
+def test_scan_auto_detects_openspec_changes(tmp_path):
+    """scan_changes auto-detects openspec/changes when no changes_dir configured."""
+    from specq.config import load_config
+
+    (tmp_path / ".specq").mkdir()
+    change_dir = tmp_path / "openspec" / "changes" / "my-feature"
+    change_dir.mkdir(parents=True)
+    (change_dir / "proposal.md").write_text("""\
+---
+risk: low
+---
+# My Feature
+Add a new feature.
+""")
+    (change_dir / "tasks.md").write_text("## task-1: Implement\nDo it.\n")
+
+    config = load_config(tmp_path)
+    assert config.changes_dir == "openspec/changes"
+
+    items = scan_changes(tmp_path, config)
+    assert len(items) == 1
+    assert items[0].id == "my-feature"
+    assert items[0].risk == "low"
+
+
+def test_scan_openspec_ignores_archive(tmp_path):
+    """archive/ inside openspec/changes is skipped."""
+    from specq.config import load_config
+
+    (tmp_path / ".specq").mkdir()
+    changes_root = tmp_path / "openspec" / "changes"
+    changes_root.mkdir(parents=True)
+
+    active = changes_root / "active-change"
+    active.mkdir()
+    (active / "proposal.md").write_text("# Active\n")
+
+    archived = changes_root / "archive" / "old-change"
+    archived.mkdir(parents=True)
+    (archived / "proposal.md").write_text("# Old\n")
+
+    config = load_config(tmp_path)
+    items = scan_changes(tmp_path, config)
+    assert len(items) == 1
+    assert items[0].id == "active-change"
