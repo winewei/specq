@@ -14,6 +14,9 @@ from pathlib import Path
 
 from .code_agent import AgentRun
 
+# Seconds to wait for the CLI to respond to the initialize request.
+_INIT_TIMEOUT = 30.0
+
 
 class ACPSubprocessAgent:
     """Generic coding agent that drives a CLI subprocess via ACP.
@@ -26,6 +29,9 @@ class ACPSubprocessAgent:
       5. Read streaming notifications (text deltas, permission requests …)
       6. Auto-approve any ``permissions/requested`` from the agent
       7. Stop on ``agents/done`` notification or final ``agents/run`` response
+
+    Stderr is drained concurrently to prevent OS pipe buffer fill-up
+    and the resulting deadlock that would occur for long-running agents.
     """
 
     name = "acp"
@@ -54,6 +60,7 @@ class ACPSubprocessAgent:
         output_parts: list[str] = []
         turns = 0
         proc = None
+        stderr_task: asyncio.Task | None = None
 
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -63,6 +70,16 @@ class ACPSubprocessAgent:
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(cwd),
             )
+
+            # Drain stderr concurrently so the OS pipe buffer never fills up,
+            # which would block the subprocess and deadlock the event loop.
+            async def _drain_stderr() -> None:
+                try:
+                    await proc.stderr.read()
+                except Exception:
+                    pass
+
+            stderr_task = asyncio.create_task(_drain_stderr())
 
             _id = 0
 
@@ -76,10 +93,9 @@ class ACPSubprocessAgent:
                 await proc.stdin.drain()
 
             # ── 1. Initialize ──────────────────────────────────────────────
-            init_id = next_id()
             await send({
                 "jsonrpc": "2.0",
-                "id": init_id,
+                "id": next_id(),
                 "method": "initialize",
                 "params": {
                     "protocolVersion": "0.1",
@@ -88,8 +104,16 @@ class ACPSubprocessAgent:
                 },
             })
 
-            # Wait for the server's initialize response (one line)
-            await proc.stdout.readline()
+            # Wait for the server's initialize response with a timeout so a
+            # hanging CLI does not block indefinitely.
+            try:
+                await asyncio.wait_for(
+                    proc.stdout.readline(), timeout=_INIT_TIMEOUT
+                )
+            except asyncio.TimeoutError:
+                raise RuntimeError(
+                    f"ACP initialize timed out after {_INIT_TIMEOUT:.0f} s"
+                )
 
             # Send initialized notification
             await send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
@@ -137,7 +161,8 @@ class ACPSubprocessAgent:
                     })
                     continue
 
-                # Streaming text from the agent
+                # Streaming text from the agent — deltas are character sequences,
+                # not lines; concatenate them directly without any separator.
                 if method == "agents/textDelta":
                     delta = msg.get("params", {}).get("delta", {})
                     if delta.get("type") == "text":
@@ -192,6 +217,12 @@ class ACPSubprocessAgent:
                 duration_sec=time.monotonic() - start,
             )
         finally:
+            if stderr_task is not None:
+                stderr_task.cancel()
+                try:
+                    await stderr_task
+                except (asyncio.CancelledError, Exception):
+                    pass
             if proc is not None:
                 try:
                     proc.stdin.close()
@@ -202,9 +233,10 @@ class ACPSubprocessAgent:
                     except Exception:
                         pass
 
+        # Text deltas are sequential character sequences — join with no separator.
         return AgentRun(
             success=True,
-            output="\n".join(output_parts),
+            output="".join(output_parts),
             turns=turns,
             duration_sec=time.monotonic() - start,
         )
