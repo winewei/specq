@@ -83,6 +83,7 @@ class WorkItem:
     executor_type: str = ""        # "" → use global config; "gemini_cli" | "codex" | "claude_code"
     executor_model: str = ""       # "" → use global config; non-empty → per-change override
     executor_max_turns: int = 0    # 0  → use global config; non-zero → per-change override
+    executor_tools: list[str] = field(default_factory=list)  # [] → use global allowed_tools
     verification_strategy: str = "" # "" → use risk_policy; non-empty → per-change override
     voters: list[dict] = field(default_factory=list)
 

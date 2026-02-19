@@ -9,7 +9,7 @@ from .compiler import Compiler, PassthroughCompiler
 from .config import Config, get_verification_strategy
 from .dag import build_dag, check_cycle, update_blocked_ready
 from .db import Database
-from .executor import Executor, _DEFAULT_TOOLS
+from .executor import Executor
 from .git_ops import get_change_diff
 from .models import Status, VoteResult
 from .notifier import Notifier
@@ -79,17 +79,19 @@ def _create_executor_for_item(config: Config, work_item) -> Executor:
     agent_type = work_item.executor_type or config.executor.type
     model = work_item.executor_model or config.executor.model
     max_turns = work_item.executor_max_turns or config.executor.max_turns
+    # Per-change tools override global config; both fall back to ExecutorConfig default
+    allowed_tools = work_item.executor_tools or config.executor.allowed_tools
 
     if agent_type == "gemini_cli":
         agent = GeminiCLIAgent(model=model, max_turns=max_turns)
     elif agent_type == "codex":
         agent = CodexAgent(model=model, max_turns=max_turns)
     else:
-        # Default: claude_code
+        # Default: claude_code — pass allowed_tools so sub-agents / skills are opt-in
         agent = ClaudeCodeAgent(
             model=model,
             max_turns=max_turns,
-            allowed_tools=_DEFAULT_TOOLS,
+            allowed_tools=allowed_tools,
             system_prompt="",  # overridden per-run in Executor.execute()
         )
     return Executor(agent=agent)

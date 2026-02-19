@@ -38,6 +38,16 @@ class ExecutorConfig:
     type: str = "claude_code"
     model: str = "claude-sonnet-4-5"
     max_turns: int = 50
+    allowed_tools: list[str] = field(default_factory=lambda: [
+        # File operations
+        "Bash", "Read", "Write", "Edit", "Glob", "Grep",
+        # Task tracking
+        "TodoRead", "TodoWrite",
+        # Sub-agents — lets Claude Code spawn parallel worker agents
+        "Task",
+        # Skills — lets Claude Code invoke project-level slash-command skills
+        "Skill",
+    ])
 
 
 @dataclass
@@ -174,6 +184,7 @@ def _dict_to_config(data: dict, project_root: str) -> Config:
             type=e.get("type", cfg.executor.type),
             model=e.get("model", cfg.executor.model),
             max_turns=e.get("max_turns", cfg.executor.max_turns),
+            allowed_tools=e.get("allowed_tools", cfg.executor.allowed_tools),
         )
 
     if "verification" in data and isinstance(data["verification"], dict):
