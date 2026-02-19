@@ -23,6 +23,8 @@ class ProvidersConfig:
     anthropic: ProviderCreds = field(default_factory=ProviderCreds)
     openai: ProviderCreds = field(default_factory=ProviderCreds)
     google: ProviderCreds = field(default_factory=ProviderCreds)
+    glm: ProviderCreds = field(default_factory=ProviderCreds)
+    deepseek: ProviderCreds = field(default_factory=ProviderCreds)
 
 
 @dataclass
@@ -206,6 +208,8 @@ def _dict_to_config(data: dict, project_root: str) -> Config:
             anthropic=ProviderCreds(api_key=p.get("anthropic", {}).get("api_key", "")),
             openai=ProviderCreds(api_key=p.get("openai", {}).get("api_key", "")),
             google=ProviderCreds(api_key=p.get("google", {}).get("api_key", "")),
+            glm=ProviderCreds(api_key=p.get("glm", {}).get("api_key", "")),
+            deepseek=ProviderCreds(api_key=p.get("deepseek", {}).get("api_key", "")),
         )
 
     return cfg
@@ -268,6 +272,14 @@ def load_config(project_root: str | Path) -> Config:
     env_google = os.environ.get("GOOGLE_API_KEY")
     if env_google:
         cfg.providers.google.api_key = env_google
+
+    env_glm = os.environ.get("GLM_API_KEY")
+    if env_glm:
+        cfg.providers.glm.api_key = env_glm
+
+    env_deepseek = os.environ.get("DEEPSEEK_API_KEY")
+    if env_deepseek:
+        cfg.providers.deepseek.api_key = env_deepseek
 
     return cfg
 

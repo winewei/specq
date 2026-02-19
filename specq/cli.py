@@ -27,6 +27,8 @@ base_branch: main
 # Compiler: synthesizes proposal + task context into an executor brief.
 # provider: claude_code — uses local claude login (Claude Code Max/Pro, no API key)
 # provider: none        — passthrough, no LLM call at all
+# provider: glm         — 智谱 GLM-4-Flash (免费额度), requires GLM_API_KEY
+# provider: deepseek    — DeepSeek (低价), requires DEEPSEEK_API_KEY
 # provider: anthropic   — requires ANTHROPIC_API_KEY
 compiler:
   provider: claude_code
@@ -39,11 +41,17 @@ executor:
 
 # Verification voters.
 # provider: claude_code — uses local claude login, no API key needed
+# provider: glm         — 智谱 GLM-4-Air/GLM-4, requires GLM_API_KEY
+# provider: deepseek    — DeepSeek-R1/V3, requires DEEPSEEK_API_KEY
 # provider: openai/google/anthropic — requires API keys
 verification:
   voters:
     - provider: claude_code
       model: claude-sonnet-4-6
+    # - provider: glm
+    #   model: glm-4-air
+    # - provider: deepseek
+    #   model: deepseek-chat
   checks:
     - spec_compliance
     - regression_risk

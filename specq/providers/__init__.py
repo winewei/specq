@@ -11,6 +11,9 @@ ENDPOINTS = {
     "anthropic": "https://api.anthropic.com/v1/messages",
     "openai": "https://api.openai.com/v1/chat/completions",
     "google": "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+    # OpenAI-compatible providers
+    "glm": "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    "deepseek": "https://api.deepseek.com/v1/chat/completions",
 }
 
 _MAX_RETRIES = 3
@@ -30,10 +33,11 @@ class LLMProvider:
         """Send prompt, return text response."""
         if self.provider == "anthropic":
             return await self._call_anthropic(system, user)
-        elif self.provider == "openai":
-            return await self._call_openai(system, user)
         elif self.provider == "google":
             return await self._call_google(system, user)
+        elif self.provider in ENDPOINTS:
+            # OpenAI-compatible: openai, glm, deepseek, etc.
+            return await self._call_openai_compat(system, user, ENDPOINTS[self.provider])
         else:
             raise ValueError(f"Unknown provider: {self.provider}")
 
@@ -76,10 +80,10 @@ class LLMProvider:
         )
         return resp.json()["content"][0]["text"]
 
-    async def _call_openai(self, system: str, user: str) -> str:
+    async def _call_openai_compat(self, system: str, user: str, url: str) -> str:
         resp = await self._call_with_retry(
             "POST",
-            ENDPOINTS["openai"],
+            url,
             headers={
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",

@@ -53,6 +53,55 @@ async def test_google_request_format(httpx_mock):
     assert "AIza-key" in str(req.url)
 
 
+@pytest.mark.asyncio
+async def test_glm_request_format(httpx_mock):
+    """GLM: hits bigmodel.cn endpoint with Bearer token, OpenAI-compatible format."""
+    httpx_mock.add_response(json={"choices": [{"message": {"content": "glm resp"}}]})
+    p = LLMProvider("glm", "glm-4-air", "glm-key")
+    result = await p.chat("sys", "usr")
+
+    assert result == "glm resp"
+    req = httpx_mock.get_request()
+    assert "bigmodel.cn" in str(req.url)
+    assert "Bearer glm-key" in req.headers["authorization"]
+    body = json.loads(req.content)
+    assert body["model"] == "glm-4-air"
+    assert body["messages"][0]["role"] == "system"
+
+
+@pytest.mark.asyncio
+async def test_deepseek_request_format(httpx_mock):
+    """DeepSeek: hits api.deepseek.com with Bearer token, OpenAI-compatible format."""
+    httpx_mock.add_response(json={"choices": [{"message": {"content": "ds resp"}}]})
+    p = LLMProvider("deepseek", "deepseek-chat", "ds-key")
+    result = await p.chat("sys", "usr")
+
+    assert result == "ds resp"
+    req = httpx_mock.get_request()
+    assert "deepseek.com" in str(req.url)
+    assert "Bearer ds-key" in req.headers["authorization"]
+
+
+def test_glm_api_key_from_env(tmp_path, monkeypatch):
+    """GLM_API_KEY env var is picked up by load_config."""
+    from specq.config import load_config
+    (tmp_path / ".specq").mkdir()
+    (tmp_path / ".specq" / "config.yaml").write_text("verification:\n  voters: []\n")
+    monkeypatch.setenv("GLM_API_KEY", "glm-env-key")
+    cfg = load_config(tmp_path)
+    assert cfg.providers.glm.api_key == "glm-env-key"
+
+
+def test_deepseek_api_key_from_env(tmp_path, monkeypatch):
+    """DEEPSEEK_API_KEY env var is picked up by load_config."""
+    from specq.config import load_config
+    (tmp_path / ".specq").mkdir()
+    (tmp_path / ".specq" / "config.yaml").write_text("verification:\n  voters: []\n")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-env-key")
+    cfg = load_config(tmp_path)
+    assert cfg.providers.deepseek.api_key == "ds-env-key"
+
+
 # --- Error handling ---
 
 @pytest.mark.asyncio

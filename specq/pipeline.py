@@ -59,6 +59,10 @@ def _get_api_key(config: Config, provider: str) -> str:
         return config.providers.openai.api_key
     elif provider == "google":
         return config.providers.google.api_key
+    elif provider == "glm":
+        return config.providers.glm.api_key
+    elif provider == "deepseek":
+        return config.providers.deepseek.api_key
     return ""
 
 
