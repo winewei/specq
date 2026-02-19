@@ -398,3 +398,83 @@ def test_codex_agent_cmd_with_model():
     """CodexAgent: model is appended with --model flag."""
     agent = CodexAgent(model="o3")
     assert agent._cmd == ["codex", "--mode", "acp", "--model", "o3"]
+
+
+# ---------------------------------------------------------------------------
+# Initialize response validation (issue #9)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_initialize_error_response_returns_failure(tmp_path):
+    """If the CLI returns a JSON-RPC error for initialize, run() returns failure."""
+    init_error = json.dumps({
+        "jsonrpc": "2.0", "id": 1,
+        "error": {"code": -32600, "message": "Unsupported protocol version"},
+    }).encode() + b"\n"
+    proc = _make_proc([init_error, _rpc("agents/done")])
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+        agent = ACPSubprocessAgent(cmd=["fake-cli"])
+        result = await agent.run(prompt="task", cwd=tmp_path)
+
+    assert result.success is False
+    assert "initialize failed" in result.output.lower()
+    assert "Unsupported protocol version" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Permission auto-approval gate (issue #10)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_permission_not_granted_when_disabled(tmp_path):
+    """auto_approve_permissions=False → permissions/granted is NOT sent."""
+    written: list[dict] = []
+
+    proc = _make_proc([
+        _init_response(),
+        _rpc("permissions/requested", {"permissionsRequestId": "perm-99"}),
+        _rpc("agents/done"),
+    ])
+
+    def _capture_write(data: bytes):
+        written.append(json.loads(data.decode().strip()))
+
+    proc.stdin.write = _capture_write
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+        agent = ACPSubprocessAgent(cmd=["fake-cli"], auto_approve_permissions=False)
+        await agent.run(prompt="task", cwd=tmp_path)
+
+    granted = [m for m in written if m.get("method") == "permissions/granted"]
+    assert len(granted) == 0
+
+
+# ---------------------------------------------------------------------------
+# Output deduplication strategy (issue #11)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_final_result_ignored_when_deltas_present(tmp_path):
+    """When streaming deltas were received, the final agents/run result text is ignored."""
+    final_resp = _rpc_result(2, {
+        "output": [
+            {"role": "assistant", "content": [
+                {"type": "text", "text": "Hello, world! (duplicate summary)"}
+            ]}
+        ],
+    })
+    stdout = [
+        _init_response(),
+        _rpc("agents/textDelta", {"delta": {"type": "text", "text": "Hello,"}}),
+        _rpc("agents/textDelta", {"delta": {"type": "text", "text": " world!"}}),
+        final_resp,
+    ]
+    proc = _make_proc(stdout)
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+        agent = ACPSubprocessAgent(cmd=["fake-cli"])
+        result = await agent.run(prompt="task", cwd=tmp_path)
+
+    # Output should come from streaming deltas only — no duplication
+    assert result.output == "Hello, world!"

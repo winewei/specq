@@ -46,6 +46,7 @@ class HttpTextGen:
                 try:
                     resp = await client.request(method, url, **kwargs)
                     if resp.status_code in _RETRY_STATUSES and attempt < _MAX_RETRIES:
+                        await resp.aclose()  # Release connection before sleeping
                         await anyio.sleep(2 ** attempt)
                         continue
                     resp.raise_for_status()

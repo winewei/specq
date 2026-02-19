@@ -41,6 +41,7 @@ class ACPSubprocessAgent:
         cmd: list[str],
         max_turns: int = 50,
         system_prompt: str = "",
+        auto_approve_permissions: bool = True,
     ):
         self._cmd = cmd
         # max_turns is stored for interface compatibility but is NOT passed to the
@@ -48,6 +49,11 @@ class ACPSubprocessAgent:
         # in agents/run.  Turn limiting is the responsibility of the CLI itself.
         self.max_turns = max_turns
         self.system_prompt = system_prompt
+        # When True, all permissions/requested notifications are automatically
+        # granted so the agent can use tools without user interaction.  Set to
+        # False in security-sensitive environments where tool use should be
+        # restricted at the orchestrator layer rather than the CLI layer.
+        self.auto_approve_permissions = auto_approve_permissions
 
     async def run(
         self,
@@ -110,15 +116,28 @@ class ACPSubprocessAgent:
             })
 
             # Wait for the server's initialize response with a timeout so a
-            # hanging CLI does not block indefinitely.
+            # hanging CLI does not block indefinitely.  Parse the response and
+            # fail fast if the server reports an error — this is far more
+            # debuggable than letting the failure surface later in agents/run.
             try:
-                await asyncio.wait_for(
+                init_line = await asyncio.wait_for(
                     proc.stdout.readline(), timeout=_INIT_TIMEOUT
                 )
             except asyncio.TimeoutError:
                 raise RuntimeError(
                     f"ACP initialize timed out after {_INIT_TIMEOUT:.0f} s"
                 )
+            if init_line:
+                try:
+                    init_resp = json.loads(init_line.decode())
+                    if "error" in init_resp:
+                        err = init_resp["error"]
+                        raise RuntimeError(
+                            f"ACP initialize failed: "
+                            f"{err.get('code')} {err.get('message')}"
+                        )
+                except json.JSONDecodeError:
+                    pass  # Non-JSON banner line — proceed and let agents/run reveal any issue
 
             # Send initialized notification
             await send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
@@ -160,14 +179,19 @@ class ACPSubprocessAgent:
 
                 method = msg.get("method", "")
 
-                # Auto-approve any permission request so the agent can use tools
+                # Grant permission requests only when auto_approve_permissions is
+                # enabled (the default for coding agent use-cases).  When disabled,
+                # permission requests are silently ignored, which causes the CLI to
+                # block or timeout — set it to False only if you restrict tool use
+                # at a higher layer.
                 if method == "permissions/requested":
-                    perm_id = msg.get("params", {}).get("permissionsRequestId", "")
-                    await send({
-                        "jsonrpc": "2.0",
-                        "method": "permissions/granted",
-                        "params": {"permissionsRequestId": perm_id},
-                    })
+                    if self.auto_approve_permissions:
+                        perm_id = msg.get("params", {}).get("permissionsRequestId", "")
+                        await send({
+                            "jsonrpc": "2.0",
+                            "method": "permissions/granted",
+                            "params": {"permissionsRequestId": perm_id},
+                        })
                     continue
 
                 # Streaming text from the agent — deltas are character sequences,
@@ -188,15 +212,18 @@ class ACPSubprocessAgent:
                     done_received = True
                     break
 
-                # Final JSON-RPC response to our agents/run request
+                # Final JSON-RPC response to our agents/run request.
+                # Only use the result text when we received no streaming deltas —
+                # when deltas ARE present they form the complete live output and
+                # the final result is typically a summarised copy that would
+                # produce duplicate or overlapping content if appended.
                 if "id" in msg and msg.get("id") == run_req_id:
                     if "result" in msg:
-                        for out in msg["result"].get("output", []):
-                            for blk in out.get("content", []):
-                                if blk.get("type") == "text":
-                                    text = blk["text"]
-                                    if text not in output_parts:
-                                        output_parts.append(text)
+                        if not output_parts:
+                            for out in msg["result"].get("output", []):
+                                for blk in out.get("content", []):
+                                    if blk.get("type") == "text":
+                                        output_parts.append(blk["text"])
                     elif "error" in msg:
                         err = msg["error"]
                         return AgentRun(
@@ -289,12 +316,23 @@ class GeminiCLIAgent(ACPSubprocessAgent):
 
     name = "gemini_cli"
 
-    def __init__(self, model: str = "", max_turns: int = 50, system_prompt: str = ""):
+    def __init__(
+        self,
+        model: str = "",
+        max_turns: int = 50,
+        system_prompt: str = "",
+        auto_approve_permissions: bool = True,
+    ):
         self.model = model
         cmd = ["gemini", "--experimental-acp"]
         if model:
             cmd += ["--model", model]
-        super().__init__(cmd=cmd, max_turns=max_turns, system_prompt=system_prompt)
+        super().__init__(
+            cmd=cmd,
+            max_turns=max_turns,
+            system_prompt=system_prompt,
+            auto_approve_permissions=auto_approve_permissions,
+        )
 
 
 class CodexAgent(ACPSubprocessAgent):
@@ -315,9 +353,20 @@ class CodexAgent(ACPSubprocessAgent):
 
     name = "codex"
 
-    def __init__(self, model: str = "", max_turns: int = 50, system_prompt: str = ""):
+    def __init__(
+        self,
+        model: str = "",
+        max_turns: int = 50,
+        system_prompt: str = "",
+        auto_approve_permissions: bool = True,
+    ):
         self.model = model
         cmd = ["codex", "--mode", "acp"]
         if model:
             cmd += ["--model", model]
-        super().__init__(cmd=cmd, max_turns=max_turns, system_prompt=system_prompt)
+        super().__init__(
+            cmd=cmd,
+            max_turns=max_turns,
+            system_prompt=system_prompt,
+            auto_approve_permissions=auto_approve_permissions,
+        )

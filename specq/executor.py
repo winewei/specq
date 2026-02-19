@@ -10,6 +10,8 @@ from .models import ExecutionResult, TaskItem, WorkItem
 
 _COMMIT_SYSTEM_PROMPT = (
     "完成后 commit 你的改动。"
+    # {{描述}} is intentional: Python's .format() escapes {{ → {, so the agent
+    # sees the literal text `feat(<id>): {描述}` as the commit-message template.
     "Commit message 格式：feat({work_item_id}): {{描述}}"
 )
 
