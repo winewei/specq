@@ -7,8 +7,6 @@ import json
 import anyio
 
 from .models import VoteResult
-from .providers import LLMProvider
-from .compiler import _claude_code_chat
 
 _SYSTEM_PROMPT = """你是代码审查员。对比 git diff 和原始 proposal，判断实现是否符合规范。
 
@@ -25,11 +23,9 @@ _SYSTEM_PROMPT = """你是代码审查员。对比 git diff 和原始 proposal�
 
 def _parse_vote_response(raw: str, voter_name: str) -> VoteResult:
     """Parse LLM response into VoteResult. Default to fail on parse error."""
-    # Try to extract JSON from response (may be wrapped in markdown)
     text = raw.strip()
     if text.startswith("```"):
         lines = text.splitlines()
-        # Remove first and last ``` lines
         json_lines = []
         inside = False
         for line in lines:
@@ -50,7 +46,7 @@ def _parse_vote_response(raw: str, voter_name: str) -> VoteResult:
             verdict="error",
             confidence=0.0,
             findings=[],
-            summary=f"Failed to parse voter response as JSON",
+            summary="Failed to parse voter response as JSON",
         )
 
     verdict = data.get("verdict", "fail")
@@ -66,56 +62,37 @@ def _parse_vote_response(raw: str, voter_name: str) -> VoteResult:
     )
 
 
-class LLMVoter:
-    """Single voter using an LLM provider."""
-
-    def __init__(self, provider: str, model: str, api_key: str):
-        self.provider = provider
-        self.model = model
-        self.api_key = api_key
-        self.llm = LLMProvider(provider, model, api_key)
-
-    @property
-    def name(self) -> str:
-        return f"{self.provider}/{self.model}"
-
-    async def review(
-        self,
-        diff: str,
-        proposal: str,
-        project_rules: str,
-        checks: list[str],
-    ) -> VoteResult:
-        parts = []
-        parts.append("## Git Diff\n```\n")
-        parts.append(diff[:50000])  # Truncate very large diffs
-        parts.append("\n```\n\n")
-        parts.append(f"## Original Proposal\n{proposal}\n\n")
-        if project_rules:
-            parts.append(f"## Project Rules\n{project_rules}\n\n")
-        if checks:
-            parts.append(f"## Required Checks\n")
-            for c in checks:
-                parts.append(f"- {c}\n")
-
-        user_prompt = "".join(parts)
-        raw = await self.llm.chat(_SYSTEM_PROMPT, user_prompt)
-        return _parse_vote_response(raw, self.name)
+def _build_review_prompt(
+    diff: str,
+    proposal: str,
+    project_rules: str,
+    checks: list[str],
+) -> str:
+    parts = []
+    parts.append("## Git Diff\n```\n")
+    parts.append(diff[:50000])
+    parts.append("\n```\n\n")
+    parts.append(f"## Original Proposal\n{proposal}\n\n")
+    if project_rules:
+        parts.append(f"## Project Rules\n{project_rules}\n\n")
+    if checks:
+        parts.append("## Required Checks\n")
+        for c in checks:
+            parts.append(f"- {c}\n")
+    return "".join(parts)
 
 
-class ClaudeCodeVoter:
-    """Voter using local Claude Code CLI auth — no API key required.
+class Voter:
+    """Single code-review voter backed by any TextGen provider.
 
-    Uses claude_code_sdk.query() with max_turns=1 and no tools.
-    Configure via: verification.voters[].provider: claude_code
+    Args:
+        name: Display name used in VoteResult (e.g. ``"claude_code/claude-sonnet-4-6"``).
+        text_gen: Any object with ``async chat(system, user) -> str``.
     """
 
-    def __init__(self, model: str):
-        self.model = model
-
-    @property
-    def name(self) -> str:
-        return f"claude_code/{self.model}"
+    def __init__(self, name: str, text_gen):
+        self.name = name
+        self.text_gen = text_gen
 
     async def review(
         self,
@@ -124,44 +101,23 @@ class ClaudeCodeVoter:
         project_rules: str,
         checks: list[str],
     ) -> VoteResult:
-        parts = []
-        parts.append("## Git Diff\n```\n")
-        parts.append(diff[:50000])
-        parts.append("\n```\n\n")
-        parts.append(f"## Original Proposal\n{proposal}\n\n")
-        if project_rules:
-            parts.append(f"## Project Rules\n{project_rules}\n\n")
-        if checks:
-            parts.append("## Required Checks\n")
-            for c in checks:
-                parts.append(f"- {c}\n")
-
-        user_prompt = "".join(parts)
-        try:
-            raw = await _claude_code_chat(_SYSTEM_PROMPT, user_prompt, self.model)
-        except Exception as exc:
-            return VoteResult(
-                voter=self.name,
-                verdict="error",
-                confidence=0.0,
-                findings=[],
-                summary=f"ClaudeCodeVoter error: {exc}",
-            )
+        user_prompt = _build_review_prompt(diff, proposal, project_rules, checks)
+        raw = await self.text_gen.chat(_SYSTEM_PROMPT, user_prompt)
         return _parse_vote_response(raw, self.name)
 
 
 async def run_voters(
-    voters: list[LLMVoter],
+    voters: list[Voter],
     diff: str,
     proposal: str,
     project_rules: str,
     checks: list[str],
 ) -> list[VoteResult]:
-    """Run all voters in parallel. Isolate failures."""
+    """Run all voters in parallel. Isolate failures per voter."""
     results: list[VoteResult] = []
     lock = anyio.Lock()
 
-    async def _vote(voter: LLMVoter) -> None:
+    async def _vote(voter: Voter) -> None:
         try:
             result = await voter.review(diff, proposal, project_rules, checks)
         except Exception as exc:

@@ -2,16 +2,21 @@
 
 import json
 import pytest
-from specq.compiler import ClaudeCodeCompiler, LLMCompiler, PassthroughCompiler
+from unittest.mock import AsyncMock, patch
+
+from specq.compiler import Compiler, PassthroughCompiler
+from specq.providers import ClaudeCodeTextGen, HttpTextGen
 from specq.models import TaskItem, Status
 
+
+# --- Compiler(HttpTextGen) ---
 
 @pytest.mark.asyncio
 async def test_compiler_sends_all_context(httpx_mock):
     """Prompt includes proposal + all tasks + project rules."""
     httpx_mock.add_response(json={"content": [{"type": "text", "text": "brief"}]})
 
-    compiler = LLMCompiler("anthropic", "claude-haiku-4-5", "key")
+    compiler = Compiler(HttpTextGen("anthropic", "claude-haiku-4-5", "key"))
     await compiler.compile(
         proposal="# Add Auth\n实现 JWT 认证",
         all_tasks=["JWT Service", "Middleware"],
@@ -40,7 +45,7 @@ async def test_compiler_includes_prev_task_results(httpx_mock):
     prev.files_changed = ["src/auth/jwt.py", "tests/test_jwt.py"]
     prev.commit_hash = "abc123"
 
-    compiler = LLMCompiler("anthropic", "claude-haiku-4-5", "key")
+    compiler = Compiler(HttpTextGen("anthropic", "claude-haiku-4-5", "key"))
     await compiler.compile(
         proposal="# Auth", all_tasks=["task-1", "task-2"],
         current_task=TaskItem(id="task-2", title="Middleware", description=""),
@@ -60,7 +65,7 @@ async def test_compiler_includes_retry_findings(httpx_mock):
     """Retry prompt includes voter findings."""
     httpx_mock.add_response(json={"content": [{"type": "text", "text": "fixed brief"}]})
 
-    compiler = LLMCompiler("anthropic", "claude-haiku-4-5", "key")
+    compiler = Compiler(HttpTextGen("anthropic", "claude-haiku-4-5", "key"))
     await compiler.compile(
         proposal="# Auth", all_tasks=["task-1"],
         current_task=TaskItem(id="task-1", title="JWT", description=""),
@@ -84,7 +89,7 @@ async def test_compiler_no_findings_no_fix_section(httpx_mock):
     """First compile has no retry/fix content."""
     httpx_mock.add_response(json={"content": [{"type": "text", "text": "brief"}]})
 
-    compiler = LLMCompiler("anthropic", "claude-haiku-4-5", "key")
+    compiler = Compiler(HttpTextGen("anthropic", "claude-haiku-4-5", "key"))
     await compiler.compile(
         proposal="# Auth", all_tasks=["t1"],
         current_task=TaskItem(id="t1", title="JWT", description=""),
@@ -148,13 +153,15 @@ async def test_passthrough_compiler_includes_retry_findings():
     assert "hardcoded secret" in result
 
 
+# --- Compiler(ClaudeCodeTextGen) ---
+
 @pytest.mark.asyncio
 async def test_claude_code_compiler_no_api_call(httpx_mock):
-    """ClaudeCodeCompiler uses local CLI auth, not direct HTTP to Anthropic."""
-    from unittest.mock import AsyncMock, patch
+    """Compiler(ClaudeCodeTextGen) uses local CLI auth, not HTTP."""
+    text_gen = ClaudeCodeTextGen(model="claude-haiku-4-5")
+    compiler = Compiler(text_gen, fallback_on_error=True)
 
-    with patch("specq.compiler._claude_code_chat", new=AsyncMock(return_value="compiled brief")):
-        compiler = ClaudeCodeCompiler(model="claude-haiku-4-5")
+    with patch.object(text_gen, "chat", new=AsyncMock(return_value="compiled brief")):
         result = await compiler.compile(
             proposal="# Add Auth",
             all_tasks=["JWT Service"],
@@ -170,11 +177,11 @@ async def test_claude_code_compiler_no_api_call(httpx_mock):
 
 @pytest.mark.asyncio
 async def test_claude_code_compiler_fallback_on_sdk_error():
-    """ClaudeCodeCompiler falls back to raw prompt when SDK unavailable."""
-    from unittest.mock import AsyncMock, patch
+    """Compiler(ClaudeCodeTextGen, fallback_on_error=True) falls back to raw prompt on error."""
+    text_gen = ClaudeCodeTextGen(model="claude-haiku-4-5")
+    compiler = Compiler(text_gen, fallback_on_error=True)
 
-    with patch("specq.compiler._claude_code_chat", new=AsyncMock(side_effect=ImportError("no sdk"))):
-        compiler = ClaudeCodeCompiler(model="claude-haiku-4-5")
+    with patch.object(text_gen, "chat", new=AsyncMock(side_effect=ImportError("no sdk"))):
         result = await compiler.compile(
             proposal="# Auth\nUse PyJWT.",
             all_tasks=["task-1"],
@@ -187,9 +194,11 @@ async def test_claude_code_compiler_fallback_on_sdk_error():
     assert "Auth" in result  # fallback returns raw prompt
 
 
+# --- Pipeline factory ---
+
 @pytest.mark.asyncio
 async def test_pipeline_creates_claude_code_compiler(tmp_project):
-    """_create_compiler returns ClaudeCodeCompiler when provider is claude_code."""
+    """_create_compiler returns Compiler(ClaudeCodeTextGen) when provider is claude_code."""
     from specq.config import load_config
     from specq.pipeline import _create_compiler
 
@@ -198,13 +207,15 @@ async def test_pipeline_creates_claude_code_compiler(tmp_project):
     )
     config = load_config(tmp_project)
     compiler = _create_compiler(config)
-    assert isinstance(compiler, ClaudeCodeCompiler)
-    assert compiler.model == "claude-haiku-4-5"
+    assert isinstance(compiler, Compiler)
+    assert isinstance(compiler.text_gen, ClaudeCodeTextGen)
+    assert compiler.text_gen.model == "claude-haiku-4-5"
+    assert compiler.fallback_on_error is True
 
 
 @pytest.mark.asyncio
 async def test_pipeline_uses_passthrough_when_provider_none(tmp_project, monkeypatch):
-    """pipeline._create_compiler returns PassthroughCompiler when provider is none."""
+    """_create_compiler returns PassthroughCompiler when provider is none."""
     from specq.config import load_config
     from specq.pipeline import _create_compiler
 

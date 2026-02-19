@@ -1,9 +1,11 @@
 """Tests for multi-model voter."""
 
 import json
-import httpx as httpx_lib
 import pytest
-from specq.voter import ClaudeCodeVoter, LLMVoter, run_voters
+from unittest.mock import AsyncMock, patch
+
+from specq.voter import Voter, run_voters
+from specq.providers import ClaudeCodeTextGen, HttpTextGen
 
 
 # --- JSON vote parsing ---
@@ -21,7 +23,7 @@ async def test_voter_parses_structured_result(httpx_mock):
         "summary": "实现不完整"
     })}}]})
 
-    voter = LLMVoter("openai", "gpt-4o", "key")
+    voter = Voter("openai/gpt-4o", HttpTextGen("openai", "gpt-4o", "key"))
     result = await voter.review(
         diff="diff --git a/auth.py...",
         proposal="# Add JWT with refresh token",
@@ -42,7 +44,7 @@ async def test_voter_malformed_json_not_pass(httpx_mock):
         "content": "I think the code looks great! It passes all checks."
     }}]})
 
-    voter = LLMVoter("openai", "gpt-4o", "key")
+    voter = Voter("openai/gpt-4o", HttpTextGen("openai", "gpt-4o", "key"))
     result = await voter.review(diff="...", proposal="...", project_rules="", checks=[])
     assert result.verdict in ("fail", "error")
 
@@ -54,7 +56,7 @@ async def test_voter_partial_json_defaults(httpx_mock):
         "verdict": "pass",
     })}}]})
 
-    voter = LLMVoter("openai", "gpt-4o", "key")
+    voter = Voter("openai/gpt-4o", HttpTextGen("openai", "gpt-4o", "key"))
     result = await voter.review(diff="...", proposal="...", project_rules="", checks=[])
     assert result.verdict == "pass"
     assert result.findings is not None
@@ -70,7 +72,10 @@ async def test_voters_parallel_all_collected(httpx_mock):
             "verdict": verdict, "confidence": 0.8, "findings": [], "summary": "ok"
         })}}]})
 
-    voters = [LLMVoter("openai", "gpt-4o", f"k{i}") for i in range(3)]
+    voters = [
+        Voter(f"openai/gpt-4o-{i}", HttpTextGen("openai", "gpt-4o", f"k{i}"))
+        for i in range(3)
+    ]
     results = await run_voters(voters, diff="...", proposal="...", project_rules="", checks=[])
     assert len(results) == 3
     assert sum(1 for r in results if r.verdict == "pass") == 2
@@ -79,24 +84,20 @@ async def test_voters_parallel_all_collected(httpx_mock):
 @pytest.mark.asyncio
 async def test_single_voter_failure_isolated():
     """One voter failure doesn't affect others — tested via mock."""
-    from unittest.mock import AsyncMock, patch
-
-    voter1 = LLMVoter("openai", "gpt-4o", "k1")
-    voter2 = LLMVoter("openai", "gpt-4o", "k2")
+    voter1 = Voter("openai/gpt-4o", HttpTextGen("openai", "gpt-4o", "k1"))
+    voter2 = Voter("openai/gpt-4o", HttpTextGen("openai", "gpt-4o", "k2"))
 
     from specq.models import VoteResult
 
     pass_result = VoteResult(voter="openai/gpt-4o", verdict="pass",
                              confidence=0.9, findings=[], summary="ok")
 
-    # voter1 raises, voter2 succeeds
     with patch.object(voter1, "review", side_effect=Exception("timeout")):
         with patch.object(voter2, "review", new_callable=AsyncMock, return_value=pass_result):
             results = await run_voters([voter1, voter2], diff="...", proposal="...",
                                        project_rules="", checks=[])
 
     assert len(results) == 2
-    # One error, one pass
     verdicts = {r.verdict for r in results}
     assert "pass" in verdicts
     assert "error" in verdicts
@@ -109,7 +110,7 @@ async def test_voter_passes_checks_to_prompt(httpx_mock):
         "verdict": "pass", "confidence": 0.9, "findings": [], "summary": ""
     })}}]})
 
-    voter = LLMVoter("openai", "gpt-4o", "key")
+    voter = Voter("openai/gpt-4o", HttpTextGen("openai", "gpt-4o", "key"))
     await voter.review(
         diff="...", proposal="...", project_rules="",
         checks=["spec_compliance", "regression_risk", "architecture"],
@@ -122,16 +123,16 @@ async def test_voter_passes_checks_to_prompt(httpx_mock):
     assert "architecture" in user_msg
 
 
-# --- ClaudeCodeVoter ---
+# --- Voter(ClaudeCodeTextGen) ---
 
 @pytest.mark.asyncio
 async def test_claude_code_voter_no_api_call(httpx_mock):
-    """ClaudeCodeVoter uses local CLI auth, not HTTP to LLM providers."""
-    from unittest.mock import AsyncMock, patch
-
+    """Voter(ClaudeCodeTextGen) uses local CLI auth, not HTTP to LLM providers."""
     raw = json.dumps({"verdict": "pass", "confidence": 0.9, "findings": [], "summary": "ok"})
-    with patch("specq.voter._claude_code_chat", new=AsyncMock(return_value=raw)):
-        voter = ClaudeCodeVoter(model="claude-sonnet-4-6")
+    text_gen = ClaudeCodeTextGen(model="claude-sonnet-4-6")
+    voter = Voter("claude_code/claude-sonnet-4-6", text_gen)
+
+    with patch.object(text_gen, "chat", new=AsyncMock(return_value=raw)):
         result = await voter.review(diff="...", proposal="...", project_rules="", checks=[])
 
     assert httpx_mock.get_requests() == []
@@ -140,21 +141,23 @@ async def test_claude_code_voter_no_api_call(httpx_mock):
 
 
 @pytest.mark.asyncio
-async def test_claude_code_voter_sdk_error_returns_error_verdict():
-    """ClaudeCodeVoter SDK failure returns error verdict (does not raise)."""
-    from unittest.mock import AsyncMock, patch
+async def test_claude_code_voter_sdk_error_isolated_by_run_voters():
+    """ClaudeCodeTextGen SDK failure: run_voters isolates it as error verdict."""
+    text_gen = ClaudeCodeTextGen(model="claude-sonnet-4-6")
+    voter = Voter("claude_code/claude-sonnet-4-6", text_gen)
 
-    with patch("specq.voter._claude_code_chat", new=AsyncMock(side_effect=RuntimeError("no auth"))):
-        voter = ClaudeCodeVoter(model="claude-sonnet-4-6")
-        result = await voter.review(diff="...", proposal="...", project_rules="", checks=[])
+    with patch.object(text_gen, "chat", new=AsyncMock(side_effect=RuntimeError("no auth"))):
+        results = await run_voters([voter], diff="...", proposal="...", project_rules="", checks=[])
 
-    assert result.verdict == "error"
-    assert "no auth" in result.summary
+    assert results[0].verdict == "error"
+    assert "no auth" in results[0].summary
 
+
+# --- Pipeline factory ---
 
 @pytest.mark.asyncio
 async def test_pipeline_creates_claude_code_voter(tmp_project):
-    """_create_voters returns ClaudeCodeVoter when provider is claude_code."""
+    """_create_voters returns Voter(ClaudeCodeTextGen) when provider is claude_code."""
     from specq.config import load_config
     from specq.pipeline import _create_voters
 
@@ -167,5 +170,7 @@ verification:
     config = load_config(tmp_project)
     voters = _create_voters(config)
     assert len(voters) == 1
-    assert isinstance(voters[0], ClaudeCodeVoter)
-    assert voters[0].model == "claude-sonnet-4-6"
+    assert isinstance(voters[0], Voter)
+    assert isinstance(voters[0].text_gen, ClaudeCodeTextGen)
+    assert voters[0].text_gen.model == "claude-sonnet-4-6"
+    assert voters[0].name == "claude_code/claude-sonnet-4-6"

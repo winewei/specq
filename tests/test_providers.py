@@ -3,7 +3,7 @@
 import json
 import httpx
 import pytest
-from specq.providers import LLMProvider
+from specq.providers import HttpTextGen, ClaudeCodeTextGen, ENDPOINTS
 
 
 # --- API request format ---
@@ -12,7 +12,7 @@ from specq.providers import LLMProvider
 async def test_anthropic_request_format(httpx_mock):
     """Anthropic: correct headers + body."""
     httpx_mock.add_response(json={"content": [{"type": "text", "text": "response"}]})
-    p = LLMProvider("anthropic", "claude-haiku-4-5", "sk-test")
+    p = HttpTextGen("anthropic", "claude-haiku-4-5", "sk-test")
     result = await p.chat("system prompt", "user prompt")
 
     assert result == "response"
@@ -29,7 +29,7 @@ async def test_anthropic_request_format(httpx_mock):
 async def test_openai_request_format(httpx_mock):
     """OpenAI: Bearer token + system/user messages."""
     httpx_mock.add_response(json={"choices": [{"message": {"content": "resp"}}]})
-    p = LLMProvider("openai", "gpt-4o", "sk-oai")
+    p = HttpTextGen("openai", "gpt-4o", "sk-oai")
     result = await p.chat("sys", "usr")
 
     assert result == "resp"
@@ -44,7 +44,7 @@ async def test_openai_request_format(httpx_mock):
 async def test_google_request_format(httpx_mock):
     """Google: URL contains model + api key."""
     httpx_mock.add_response(json={"candidates": [{"content": {"parts": [{"text": "resp"}]}}]})
-    p = LLMProvider("google", "gemini-2.5-flash", "AIza-key")
+    p = HttpTextGen("google", "gemini-2.5-flash", "AIza-key")
     result = await p.chat("sys", "usr")
 
     assert result == "resp"
@@ -57,7 +57,7 @@ async def test_google_request_format(httpx_mock):
 async def test_glm_request_format(httpx_mock):
     """GLM: hits bigmodel.cn endpoint with Bearer token, OpenAI-compatible format."""
     httpx_mock.add_response(json={"choices": [{"message": {"content": "glm resp"}}]})
-    p = LLMProvider("glm", "glm-4-air", "glm-key")
+    p = HttpTextGen("glm", "glm-4-air", "glm-key")
     result = await p.chat("sys", "usr")
 
     assert result == "glm resp"
@@ -73,7 +73,7 @@ async def test_glm_request_format(httpx_mock):
 async def test_deepseek_request_format(httpx_mock):
     """DeepSeek: hits api.deepseek.com with Bearer token, OpenAI-compatible format."""
     httpx_mock.add_response(json={"choices": [{"message": {"content": "ds resp"}}]})
-    p = LLMProvider("deepseek", "deepseek-chat", "ds-key")
+    p = HttpTextGen("deepseek", "deepseek-chat", "ds-key")
     result = await p.chat("sys", "usr")
 
     assert result == "ds resp"
@@ -107,7 +107,7 @@ def test_deepseek_api_key_from_env(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_unknown_provider_raises():
     """Unknown provider → ValueError."""
-    p = LLMProvider("azure", "model", "key")
+    p = HttpTextGen("azure", "model", "key")
     with pytest.raises(ValueError, match="[Uu]nknown"):
         await p.chat("sys", "usr")
 
@@ -119,7 +119,7 @@ async def test_retry_on_timeout(httpx_mock):
     httpx_mock.add_exception(httpx.ReadTimeout("timeout"))
     httpx_mock.add_response(json={"content": [{"type": "text", "text": "ok"}]})
 
-    p = LLMProvider("anthropic", "claude-haiku-4-5", "key")
+    p = HttpTextGen("anthropic", "claude-haiku-4-5", "key")
     result = await p.chat("sys", "usr")
     assert result == "ok"
 
@@ -130,7 +130,7 @@ async def test_retry_exhausted_raises(httpx_mock):
     for _ in range(4):
         httpx_mock.add_exception(httpx.ReadTimeout("timeout"))
 
-    p = LLMProvider("anthropic", "claude-haiku-4-5", "key")
+    p = HttpTextGen("anthropic", "claude-haiku-4-5", "key")
     with pytest.raises(Exception):
         await p.chat("sys", "usr")
 
@@ -141,7 +141,7 @@ async def test_429_rate_limit_retry(httpx_mock):
     httpx_mock.add_response(status_code=429, json={"error": "rate limited"})
     httpx_mock.add_response(json={"content": [{"type": "text", "text": "ok"}]})
 
-    p = LLMProvider("anthropic", "claude-haiku-4-5", "key")
+    p = HttpTextGen("anthropic", "claude-haiku-4-5", "key")
     result = await p.chat("sys", "usr")
     assert result == "ok"
 
@@ -152,6 +152,6 @@ async def test_500_raises_after_retry(httpx_mock):
     for _ in range(4):
         httpx_mock.add_response(status_code=500, json={"error": "internal"})
 
-    p = LLMProvider("anthropic", "claude-haiku-4-5", "key")
+    p = HttpTextGen("anthropic", "claude-haiku-4-5", "key")
     with pytest.raises(Exception):
         await p.chat("sys", "usr")

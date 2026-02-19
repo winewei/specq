@@ -1,37 +1,32 @@
-"""Execution backend — Claude Code SDK integration."""
+"""Executor: domain wrapper around a CodeAgent."""
 
 from __future__ import annotations
 
-import subprocess
-import time
 from pathlib import Path
-from typing import Protocol
 
 from .models import ExecutionResult, TaskItem, WorkItem
+from .providers import ClaudeCodeAgent
+
+_COMMIT_SYSTEM_PROMPT = (
+    "完成后 commit 你的改动。"
+    "Commit message 格式：feat({work_item_id}): {{描述}}"
+)
+
+_DEFAULT_TOOLS = [
+    "Bash", "Read", "Write", "Edit", "Glob", "Grep",
+    "TodoRead", "TodoWrite",
+]
 
 
-class ExecutionBackend(Protocol):
-    """v1 only has ClaudeCodeExecutor; Protocol reserved for future."""
+class Executor:
+    """Runs a CodeAgent and collects git results.
 
-    name: str
+    Separates agent execution (providers layer) from git post-processing
+    (domain layer): changed files, commit hash.
+    """
 
-    async def execute(
-        self,
-        work_item: WorkItem,
-        task: TaskItem,
-        cwd: Path,
-        brief: str,
-    ) -> ExecutionResult: ...
-
-
-class ClaudeCodeExecutor:
-    """Claude Code SDK native integration."""
-
-    name = "claude_code"
-
-    def __init__(self, model: str, max_turns: int):
-        self.model = model
-        self.max_turns = max_turns
+    def __init__(self, agent: ClaudeCodeAgent):
+        self.agent = agent
 
     async def execute(
         self,
@@ -40,69 +35,31 @@ class ClaudeCodeExecutor:
         cwd: Path,
         brief: str,
     ) -> ExecutionResult:
-        try:
-            from claude_code_sdk import ClaudeCodeOptions, Message, query
-        except ImportError:
+        system_prompt = _COMMIT_SYSTEM_PROMPT.format(work_item_id=work_item.id)
+        run = await self.agent.run(prompt=brief, cwd=cwd, system_prompt=system_prompt)
+
+        if not run.success:
             return ExecutionResult(
                 success=False,
-                output="claude-code-sdk not installed",
+                output=run.output,
+                duration_sec=run.duration_sec,
+                turns_used=run.turns,
+                tokens_in=run.tokens_in,
+                tokens_out=run.tokens_out,
             )
-
-        options = ClaudeCodeOptions(
-            model=self.model,
-            max_turns=self.max_turns,
-            cwd=str(cwd),
-            system_prompt=(
-                f"完成后 commit 你的改动。"
-                f"Commit message 格式：feat({work_item.id}): {{描述}}"
-            ),
-            allowed_tools=[
-                "Bash", "Read", "Write", "Edit", "Glob", "Grep",
-                "TodoRead", "TodoWrite",
-            ],
-        )
-
-        output_parts: list[str] = []
-        turns = 0
-        tokens_in = 0
-        tokens_out = 0
-        start = time.monotonic()
-
-        try:
-            async for message in query(prompt=brief, options=options):
-                if isinstance(message, Message):
-                    turns += 1
-                    for block in message.content:
-                        if hasattr(block, "text"):
-                            output_parts.append(block.text)
-                    if hasattr(message, "usage") and message.usage:
-                        tokens_in += getattr(message.usage, "input_tokens", 0)
-                        tokens_out += getattr(message.usage, "output_tokens", 0)
-        except Exception as exc:
-            elapsed = time.monotonic() - start
-            return ExecutionResult(
-                success=False,
-                output=f"Executor error: {exc}",
-                duration_sec=elapsed,
-                turns_used=turns,
-                tokens_in=tokens_in,
-                tokens_out=tokens_out,
-            )
-
-        elapsed = time.monotonic() - start
 
         files_changed = await self._get_changed_files(cwd)
         commit_hash = await self._get_latest_commit(cwd)
 
         return ExecutionResult(
             success=True,
-            output="\n".join(output_parts),
+            output=run.output,
             files_changed=files_changed,
             commit_hash=commit_hash,
-            duration_sec=elapsed,
-            turns_used=turns,
-            tokens_in=tokens_in,
-            tokens_out=tokens_out,
+            duration_sec=run.duration_sec,
+            turns_used=run.turns,
+            tokens_in=run.tokens_in,
+            tokens_out=run.tokens_out,
         )
 
     async def _get_changed_files(self, cwd: Path) -> list[str]:

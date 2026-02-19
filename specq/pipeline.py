@@ -5,17 +5,18 @@ from __future__ import annotations
 from pathlib import Path
 
 from .aggregator import aggregate_votes
-from .compiler import ClaudeCodeCompiler, LLMCompiler, PassthroughCompiler
+from .compiler import Compiler, PassthroughCompiler
 from .config import Config, get_verification_strategy
 from .dag import build_dag, check_cycle, update_blocked_ready
 from .db import Database
-from .executor import ClaudeCodeExecutor
+from .executor import Executor, _DEFAULT_TOOLS
 from .git_ops import get_change_diff
 from .models import Status, VoteResult
 from .notifier import Notifier
+from .providers import ClaudeCodeAgent, ClaudeCodeTextGen, HttpTextGen
 from .scanner import scan_changes
 from .scheduler import pick_next
-from .voter import ClaudeCodeVoter, LLMVoter, run_voters
+from .voter import Voter, run_voters
 
 
 def _read_claude_md(config: Config) -> str:
@@ -24,32 +25,6 @@ def _read_claude_md(config: Config) -> str:
     if path.exists():
         return path.read_text(encoding="utf-8")
     return ""
-
-
-def _create_compiler(config: Config):
-    provider = config.compiler.provider
-    if not provider or provider == "none":
-        return PassthroughCompiler()
-    if provider == "claude_code":
-        return ClaudeCodeCompiler(model=config.compiler.model)
-    model = config.compiler.model
-    api_key = _get_api_key(config, provider)
-    return LLMCompiler(provider, model, api_key)
-
-
-def _create_voters(config: Config) -> list:
-    voters = []
-    for v in config.verification.voters:
-        provider = v.get("provider", "")
-        model = v.get("model", "")
-        if not provider or not model:
-            continue
-        if provider == "claude_code":
-            voters.append(ClaudeCodeVoter(model=model))
-        else:
-            api_key = _get_api_key(config, provider)
-            voters.append(LLMVoter(provider, model, api_key))
-    return voters
 
 
 def _get_api_key(config: Config, provider: str) -> str:
@@ -66,6 +41,46 @@ def _get_api_key(config: Config, provider: str) -> str:
     return ""
 
 
+def _make_text_gen(config: Config, provider: str, model: str):
+    """Construct the appropriate TextGen object for a given provider."""
+    if provider == "claude_code":
+        return ClaudeCodeTextGen(model=model)
+    api_key = _get_api_key(config, provider)
+    return HttpTextGen(provider=provider, model=model, api_key=api_key)
+
+
+def _create_compiler(config: Config):
+    provider = config.compiler.provider
+    if not provider or provider == "none":
+        return PassthroughCompiler()
+    text_gen = _make_text_gen(config, provider, config.compiler.model)
+    fallback = provider == "claude_code"
+    return Compiler(text_gen=text_gen, fallback_on_error=fallback)
+
+
+def _create_voters(config: Config) -> list[Voter]:
+    voters = []
+    for v in config.verification.voters:
+        provider = v.get("provider", "")
+        model = v.get("model", "")
+        if not provider or not model:
+            continue
+        text_gen = _make_text_gen(config, provider, model)
+        name = f"{provider}/{model}"
+        voters.append(Voter(name=name, text_gen=text_gen))
+    return voters
+
+
+def _create_executor(config: Config) -> Executor:
+    agent = ClaudeCodeAgent(
+        model=config.executor.model,
+        max_turns=config.executor.max_turns,
+        allowed_tools=_DEFAULT_TOOLS,
+        system_prompt="",  # overridden per-run in Executor.execute()
+    )
+    return Executor(agent=agent)
+
+
 async def run_pipeline(
     config: Config,
     db: Database,
@@ -73,10 +88,7 @@ async def run_pipeline(
 ) -> None:
     """Core execution loop."""
     compiler = _create_compiler(config)
-    executor = ClaudeCodeExecutor(
-        model=config.executor.model,
-        max_turns=config.executor.max_turns,
-    )
+    executor = _create_executor(config)
     notifier = Notifier(
         webhook_url=config.notify.webhook_url,
         events=config.notify.events,
@@ -215,7 +227,6 @@ async def run_pipeline(
             await db.update_status(next_item.id, Status.NEEDS_REVIEW)
             await db.log_event(next_item.id, "needs_review", {})
             await notifier.notify("change.needs_review", next_item)
-            # In non-interactive mode, stop here for this item
             if target_id:
                 break
         elif decision == "rejected":
@@ -227,7 +238,6 @@ async def run_pipeline(
                     "attempt": next_item.retry_count,
                     "findings": findings,
                 })
-                # Continue loop — will pick up the same item again
                 continue
             else:
                 await db.update_status(next_item.id, Status.FAILED)
