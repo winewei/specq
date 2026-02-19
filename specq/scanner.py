@@ -116,6 +116,8 @@ def _parse_change_dir(
     )
 
     # Per-change overrides from frontmatter
+    if "executor_type" in meta:
+        wi.executor_type = meta["executor_type"]
     if "executor_model" in meta:
         wi.executor_model = meta["executor_model"]
     if "max_turns" in meta:

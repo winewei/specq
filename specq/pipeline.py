@@ -13,7 +13,10 @@ from .executor import Executor, _DEFAULT_TOOLS
 from .git_ops import get_change_diff
 from .models import Status, VoteResult
 from .notifier import Notifier
-from .providers import ClaudeCodeAgent, ClaudeCodeTextGen, HttpTextGen
+from .providers import (
+    ClaudeCodeAgent, ClaudeCodeTextGen, HttpTextGen,
+    GeminiCLIAgent, CodexAgent,
+)
 from .scanner import scan_changes
 from .scheduler import pick_next
 from .voter import Voter, run_voters
@@ -73,14 +76,22 @@ def _create_voters_for_item(config: Config, work_item) -> list[Voter]:
 
 
 def _create_executor_for_item(config: Config, work_item) -> Executor:
+    agent_type = work_item.executor_type or config.executor.type
     model = work_item.executor_model or config.executor.model
     max_turns = work_item.executor_max_turns or config.executor.max_turns
-    agent = ClaudeCodeAgent(
-        model=model,
-        max_turns=max_turns,
-        allowed_tools=_DEFAULT_TOOLS,
-        system_prompt="",  # overridden per-run in Executor.execute()
-    )
+
+    if agent_type == "gemini_cli":
+        agent = GeminiCLIAgent(model=model, max_turns=max_turns)
+    elif agent_type == "codex":
+        agent = CodexAgent(model=model, max_turns=max_turns)
+    else:
+        # Default: claude_code
+        agent = ClaudeCodeAgent(
+            model=model,
+            max_turns=max_turns,
+            allowed_tools=_DEFAULT_TOOLS,
+            system_prompt="",  # overridden per-run in Executor.execute()
+        )
     return Executor(agent=agent)
 
 

@@ -80,6 +80,7 @@ class WorkItem:
     # Config (merged from 3 layers)
     compiler_provider: str = "anthropic"
     compiler_model: str = "claude-haiku-4-5"
+    executor_type: str = ""        # "" → use global config; "gemini_cli" | "codex" | "claude_code"
     executor_model: str = ""       # "" → use global config; non-empty → per-change override
     executor_max_turns: int = 0    # 0  → use global config; non-zero → per-change override
     verification_strategy: str = "" # "" → use risk_policy; non-empty → per-change override

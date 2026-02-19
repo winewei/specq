@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from .git_ops import get_changed_files, get_latest_commit
 from .models import ExecutionResult, TaskItem, WorkItem
-from .providers import ClaudeCodeAgent
 
 _COMMIT_SYSTEM_PROMPT = (
     "完成后 commit 你的改动。"
@@ -24,9 +24,13 @@ class Executor:
 
     Separates agent execution (providers layer) from git post-processing
     (domain layer): changed files, commit hash.
+
+    *agent* is any object that exposes::
+
+        async def run(prompt, cwd, system_prompt=None) -> AgentRun
     """
 
-    def __init__(self, agent: ClaudeCodeAgent):
+    def __init__(self, agent: Any):
         self.agent = agent
 
     async def execute(
