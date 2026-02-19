@@ -25,7 +25,6 @@ class HttpTextGen:
         self.provider = provider
         self.model = model
         self.api_key = api_key
-        self.client = httpx.AsyncClient(timeout=120)
 
     async def chat(self, system: str, user: str) -> str:
         """Send prompt, return text response."""
@@ -38,25 +37,25 @@ class HttpTextGen:
         else:
             raise ValueError(f"Unknown provider: {self.provider}")
 
-    async def close(self) -> None:
-        await self.client.aclose()
-
     async def _call_with_retry(self, method: str, url: str, **kwargs) -> httpx.Response:
+        """Run one request with exponential-backoff retry. Creates a fresh
+        httpx.AsyncClient per call so there is no shared state to clean up."""
         last_exc = None
-        for attempt in range(_MAX_RETRIES + 1):
-            try:
-                resp = await self.client.request(method, url, **kwargs)
-                if resp.status_code in _RETRY_STATUSES and attempt < _MAX_RETRIES:
-                    await anyio.sleep(2 ** attempt)
-                    continue
-                resp.raise_for_status()
-                return resp
-            except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.ConnectError) as exc:
-                last_exc = exc
-                if attempt < _MAX_RETRIES:
-                    await anyio.sleep(2 ** attempt)
-                    continue
-                raise
+        async with httpx.AsyncClient(timeout=120) as client:
+            for attempt in range(_MAX_RETRIES + 1):
+                try:
+                    resp = await client.request(method, url, **kwargs)
+                    if resp.status_code in _RETRY_STATUSES and attempt < _MAX_RETRIES:
+                        await anyio.sleep(2 ** attempt)
+                        continue
+                    resp.raise_for_status()
+                    return resp
+                except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.ConnectError) as exc:
+                    last_exc = exc
+                    if attempt < _MAX_RETRIES:
+                        await anyio.sleep(2 ** attempt)
+                        continue
+                    raise
         raise last_exc  # type: ignore[misc]
 
     async def _call_anthropic(self, system: str, user: str) -> str:

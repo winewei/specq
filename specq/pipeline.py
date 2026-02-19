@@ -58,9 +58,10 @@ def _create_compiler(config: Config):
     return Compiler(text_gen=text_gen, fallback_on_error=fallback)
 
 
-def _create_voters(config: Config) -> list[Voter]:
+def _create_voters_for_item(config: Config, work_item) -> list[Voter]:
+    voter_configs = work_item.voters or config.verification.voters
     voters = []
-    for v in config.verification.voters:
+    for v in voter_configs:
         provider = v.get("provider", "")
         model = v.get("model", "")
         if not provider or not model:
@@ -71,10 +72,12 @@ def _create_voters(config: Config) -> list[Voter]:
     return voters
 
 
-def _create_executor(config: Config) -> Executor:
+def _create_executor_for_item(config: Config, work_item) -> Executor:
+    model = work_item.executor_model or config.executor.model
+    max_turns = work_item.executor_max_turns or config.executor.max_turns
     agent = ClaudeCodeAgent(
-        model=config.executor.model,
-        max_turns=config.executor.max_turns,
+        model=model,
+        max_turns=max_turns,
         allowed_tools=_DEFAULT_TOOLS,
         system_prompt="",  # overridden per-run in Executor.execute()
     )
@@ -88,7 +91,6 @@ async def run_pipeline(
 ) -> None:
     """Core execution loop."""
     compiler = _create_compiler(config)
-    executor = _create_executor(config)
     notifier = Notifier(
         webhook_url=config.notify.webhook_url,
         events=config.notify.events,
@@ -126,6 +128,8 @@ async def run_pipeline(
         next_item = pick_next(work_items, target_id)
         if next_item is None:
             break
+
+        executor = _create_executor_for_item(config, next_item)
 
         # ④ Execute all tasks in the change serially
         for task in next_item.tasks:
@@ -190,7 +194,7 @@ async def run_pipeline(
                 Path(config.project_root), config.base_branch
             )
 
-            voters = _create_voters(config)
+            voters = _create_voters_for_item(config, next_item)
             vote_results = await run_voters(
                 voters=voters,
                 diff=diff,

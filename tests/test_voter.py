@@ -157,9 +157,10 @@ async def test_claude_code_voter_sdk_error_isolated_by_run_voters():
 
 @pytest.mark.asyncio
 async def test_pipeline_creates_claude_code_voter(tmp_project):
-    """_create_voters returns Voter(ClaudeCodeTextGen) when provider is claude_code."""
+    """_create_voters_for_item returns Voter(ClaudeCodeTextGen) when provider is claude_code."""
     from specq.config import load_config
-    from specq.pipeline import _create_voters
+    from specq.models import WorkItem
+    from specq.pipeline import _create_voters_for_item
 
     (tmp_project / ".specq" / "config.yaml").write_text("""\
 verification:
@@ -168,7 +169,8 @@ verification:
       model: claude-sonnet-4-6
 """)
     config = load_config(tmp_project)
-    voters = _create_voters(config)
+    wi = WorkItem(id="001", change_dir="c/001", title="", description="")
+    voters = _create_voters_for_item(config, wi)
     assert len(voters) == 1
     assert isinstance(voters[0], Voter)
     assert isinstance(voters[0].text_gen, ClaudeCodeTextGen)

@@ -36,7 +36,7 @@ async def test_single_low_risk_auto_accept(tmp_project, sample_change, memory_db
     mock_executor.execute = AsyncMock(return_value=_mock_exec_result())
 
     with patch("specq.pipeline._create_compiler", return_value=mock_compiler):
-        with patch("specq.pipeline._create_executor", return_value=mock_executor):
+        with patch("specq.pipeline._create_executor_for_item", return_value=mock_executor):
             from specq.pipeline import run_pipeline
             config = load_config(tmp_project)
             await run_pipeline(config, memory_db)
@@ -65,7 +65,7 @@ async def test_high_risk_needs_review(tmp_project, memory_db):
     mock_executor.execute = AsyncMock(return_value=_mock_exec_result())
 
     with patch("specq.pipeline._create_compiler", return_value=mock_compiler):
-        with patch("specq.pipeline._create_executor", return_value=mock_executor):
+        with patch("specq.pipeline._create_executor_for_item", return_value=mock_executor):
             with patch("specq.pipeline.run_voters", side_effect=all_pass):
                 from specq.pipeline import run_pipeline
                 config = load_config(tmp_project)
@@ -89,7 +89,7 @@ async def test_max_retries_then_failed(tmp_project, sample_change, memory_db):
     mock_executor.execute = AsyncMock(return_value=_mock_exec_result())
 
     with patch("specq.pipeline._create_compiler", return_value=mock_compiler):
-        with patch("specq.pipeline._create_executor", return_value=mock_executor):
+        with patch("specq.pipeline._create_executor_for_item", return_value=mock_executor):
             with patch("specq.pipeline.run_voters", side_effect=always_fail_vote):
                 from specq.pipeline import run_pipeline
                 config = load_config(tmp_project)

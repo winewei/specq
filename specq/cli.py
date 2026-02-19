@@ -220,7 +220,7 @@ def plan():
     """Show execution plan (dry-run)."""
     root = _get_project_root()
 
-    from .config import load_config
+    from .config import get_verification_strategy, load_config
     from .dag import build_dag, check_cycle, update_blocked_ready
     from .scanner import scan_changes
 
@@ -252,7 +252,7 @@ def plan():
 
     for i, item in enumerate(items, 1):
         deps_str = ", ".join(item.deps) if item.deps else "—"
-        verify = item.verification_strategy
+        verify = get_verification_strategy(item, config)
         status = item.status.value
         typer.echo(
             f"  {i:<3} {item.id:<25} {status:<10} {deps_str:<15} {item.risk:<8} {verify}"

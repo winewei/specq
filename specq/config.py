@@ -287,7 +287,7 @@ def load_config(project_root: str | Path) -> Config:
 def get_verification_strategy(work_item, config: Config) -> str:
     """Resolve verification strategy for a work item based on risk policy."""
     risk = work_item.risk
-    if work_item.verification_strategy and work_item.verification_strategy != "majority":
+    if work_item.verification_strategy:  # non-empty → explicit per-change override
         return work_item.verification_strategy
 
     rp = config.risk_policy

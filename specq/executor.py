@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .git_ops import get_changed_files, get_latest_commit
 from .models import ExecutionResult, TaskItem, WorkItem
 from .providers import ClaudeCodeAgent
 
@@ -63,9 +64,7 @@ class Executor:
         )
 
     async def _get_changed_files(self, cwd: Path) -> list[str]:
-        from .git_ops import get_changed_files
         return await get_changed_files(cwd)
 
     async def _get_latest_commit(self, cwd: Path) -> str:
-        from .git_ops import get_latest_commit
         return await get_latest_commit(cwd)

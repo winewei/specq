@@ -13,7 +13,6 @@ class Status(str, Enum):
     COMPILING = "compiling"
     RUNNING = "running"
     VERIFYING = "verifying"
-    APPROVED = "approved"
     NEEDS_REVIEW = "needs_review"
     ACCEPTED = "accepted"
     REJECTED = "rejected"
@@ -81,9 +80,9 @@ class WorkItem:
     # Config (merged from 3 layers)
     compiler_provider: str = "anthropic"
     compiler_model: str = "claude-haiku-4-5"
-    executor_model: str = "claude-sonnet-4-5"
-    executor_max_turns: int = 50
-    verification_strategy: str = "majority"
+    executor_model: str = ""       # "" → use global config; non-empty → per-change override
+    executor_max_turns: int = 0    # 0  → use global config; non-zero → per-change override
+    verification_strategy: str = "" # "" → use risk_policy; non-empty → per-change override
     voters: list[dict] = field(default_factory=list)
 
     # Budget
