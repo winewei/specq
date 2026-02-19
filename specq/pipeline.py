@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .aggregator import aggregate_votes
-from .compiler import LLMCompiler
+from .compiler import LLMCompiler, PassthroughCompiler
 from .config import Config, get_verification_strategy
 from .dag import build_dag, check_cycle, update_blocked_ready
 from .db import Database
@@ -26,8 +26,10 @@ def _read_claude_md(config: Config) -> str:
     return ""
 
 
-def _create_compiler(config: Config) -> LLMCompiler:
+def _create_compiler(config: Config):
     provider = config.compiler.provider
+    if not provider or provider == "none":
+        return PassthroughCompiler()
     model = config.compiler.model
     api_key = _get_api_key(config, provider)
     return LLMCompiler(provider, model, api_key)

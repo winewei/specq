@@ -2,7 +2,7 @@
 
 import json
 import pytest
-from specq.compiler import LLMCompiler
+from specq.compiler import LLMCompiler, PassthroughCompiler
 from specq.models import TaskItem, Status
 
 
@@ -96,3 +96,65 @@ async def test_compiler_no_findings_no_fix_section(httpx_mock):
     user_msg = body["messages"][0]["content"]
     assert "修复" not in user_msg
     assert "finding" not in user_msg.lower()
+
+
+# --- PassthroughCompiler ---
+
+@pytest.mark.asyncio
+async def test_passthrough_compiler_no_llm_call(httpx_mock):
+    """PassthroughCompiler never makes an HTTP request."""
+    compiler = PassthroughCompiler()
+    result = await compiler.compile(
+        proposal="# Add Auth\n实现 JWT",
+        all_tasks=["JWT Service", "Middleware"],
+        current_task=TaskItem(id="task-1", title="JWT Service", description="实现 JWT"),
+        prev_results=[],
+        project_rules="",
+        retry_findings=None,
+    )
+    assert httpx_mock.get_requests() == []
+    assert "JWT Service" in result
+    assert "Add Auth" in result
+
+
+@pytest.mark.asyncio
+async def test_passthrough_compiler_includes_proposal_and_rules():
+    """PassthroughCompiler brief contains proposal and project rules."""
+    compiler = PassthroughCompiler()
+    result = await compiler.compile(
+        proposal="# Auth\nUse PyJWT.",
+        all_tasks=["task-1"],
+        current_task=TaskItem(id="task-1", title="JWT", description="implement JWT"),
+        prev_results=[],
+        project_rules="Use PyJWT library.",
+        retry_findings=None,
+    )
+    assert "Auth" in result
+    assert "PyJWT" in result
+
+
+@pytest.mark.asyncio
+async def test_passthrough_compiler_includes_retry_findings():
+    """PassthroughCompiler brief includes retry findings."""
+    compiler = PassthroughCompiler()
+    result = await compiler.compile(
+        proposal="# Auth",
+        all_tasks=["task-1"],
+        current_task=TaskItem(id="task-1", title="JWT", description=""),
+        prev_results=[],
+        project_rules="",
+        retry_findings=[{"severity": "critical", "category": "spec_compliance", "description": "hardcoded secret"}],
+    )
+    assert "hardcoded secret" in result
+
+
+@pytest.mark.asyncio
+async def test_pipeline_uses_passthrough_when_provider_none(tmp_project, monkeypatch):
+    """pipeline._create_compiler returns PassthroughCompiler when provider is none."""
+    from specq.config import load_config
+    from specq.pipeline import _create_compiler
+
+    (tmp_project / ".specq" / "config.yaml").write_text("compiler:\n  provider: none\n")
+    config = load_config(tmp_project)
+    compiler = _create_compiler(config)
+    assert isinstance(compiler, PassthroughCompiler)
