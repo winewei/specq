@@ -98,3 +98,74 @@ async def test_max_retries_then_failed(tmp_project, sample_change, memory_db):
     wi = await memory_db.get_work_item("001-add-auth")
     assert wi.status == Status.FAILED
     assert wi.retry_count == 3
+
+
+# ---------------------------------------------------------------------------
+# _create_executor_for_item factory
+# ---------------------------------------------------------------------------
+
+from specq.pipeline import _create_executor_for_item
+from specq.providers import GeminiCLIAgent, CodexAgent, ClaudeCodeAgent
+from specq.executor import Executor
+
+
+def _make_work_item(**kwargs) -> WorkItem:
+    defaults = dict(id="test", change_dir="changes/test", title="t",
+                    description="d", deps=[], priority=0, risk="low",
+                    tasks=[TaskItem(id="task-1", title="t", description="d")])
+    defaults.update(kwargs)
+    return WorkItem(**defaults)
+
+
+def test_factory_default_is_claude_code(tmp_project):
+    config = load_config(tmp_project)
+    wi = _make_work_item()
+    executor = _create_executor_for_item(config, wi)
+    assert isinstance(executor, Executor)
+    assert isinstance(executor.agent, ClaudeCodeAgent)
+
+
+def test_factory_gemini_cli(tmp_project):
+    config = load_config(tmp_project)
+    wi = _make_work_item(executor_type="gemini_cli", executor_model="gemini-2.5-pro")
+    executor = _create_executor_for_item(config, wi)
+    assert isinstance(executor.agent, GeminiCLIAgent)
+    assert executor.agent._cmd == ["gemini", "--experimental-acp", "--model", "gemini-2.5-pro"]
+
+
+def test_factory_codex(tmp_project):
+    config = load_config(tmp_project)
+    wi = _make_work_item(executor_type="codex", executor_model="o3")
+    executor = _create_executor_for_item(config, wi)
+    assert isinstance(executor.agent, CodexAgent)
+    assert executor.agent._cmd == ["codex", "--mode", "acp", "--model", "o3"]
+
+
+def test_factory_gemini_cli_falls_back_to_config_model(tmp_project):
+    """When no per-item model is set, the global config model is used."""
+    config = load_config(tmp_project)
+    wi = _make_work_item(executor_type="gemini_cli")
+    executor = _create_executor_for_item(config, wi)
+    assert isinstance(executor.agent, GeminiCLIAgent)
+    # Factory falls back to config.executor.model
+    assert "--model" in executor.agent._cmd
+    assert config.executor.model in executor.agent._cmd
+
+
+def test_factory_codex_falls_back_to_config_model(tmp_project):
+    """When no per-item model is set, the global config model is used."""
+    config = load_config(tmp_project)
+    wi = _make_work_item(executor_type="codex")
+    executor = _create_executor_for_item(config, wi)
+    assert isinstance(executor.agent, CodexAgent)
+    assert "--model" in executor.agent._cmd
+    assert config.executor.model in executor.agent._cmd
+
+
+def test_factory_per_item_overrides_global(tmp_project):
+    """executor_type on a WorkItem overrides the global config default."""
+    config = load_config(tmp_project)
+    # Global config has type=claude_code; item overrides to codex
+    wi = _make_work_item(executor_type="codex")
+    executor = _create_executor_for_item(config, wi)
+    assert isinstance(executor.agent, CodexAgent)

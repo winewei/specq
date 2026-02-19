@@ -35,6 +35,9 @@ compiler:
   model: claude-haiku-4-5
 
 executor:
+  # type: claude_code   — Claude Code CLI (default; uses local claude login)
+  # type: gemini_cli    — Gemini CLI via ACP (requires 'gemini' CLI + Google auth)
+  # type: codex         — OpenAI Codex CLI via ACP (requires 'codex' CLI + OPENAI_API_KEY)
   type: claude_code
   model: claude-sonnet-4-6
   max_turns: 50
@@ -260,7 +263,7 @@ def plan():
 
     # Executor info
     typer.echo("")
-    typer.echo(f"  Executor: claude-code ({config.executor.model})")
+    typer.echo(f"  Executor: {config.executor.type} ({config.executor.model})")
     typer.echo(f"  Compiler: {config.compiler.model}")
     voters_str = ", ".join(
         v.get("model", "?") for v in config.verification.voters

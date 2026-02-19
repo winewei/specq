@@ -43,6 +43,9 @@ class ACPSubprocessAgent:
         system_prompt: str = "",
     ):
         self._cmd = cmd
+        # max_turns is stored for interface compatibility but is NOT passed to the
+        # ACP subprocess — the ACP protocol does not define a max_turns parameter
+        # in agents/run.  Turn limiting is the responsibility of the CLI itself.
         self.max_turns = max_turns
         self.system_prompt = system_prompt
 
@@ -89,6 +92,8 @@ class ACPSubprocessAgent:
                 return _id
 
             async def send(msg: dict) -> None:
+                if proc.stdin is None:
+                    raise RuntimeError("subprocess stdin is not available")
                 proc.stdin.write((json.dumps(msg) + "\n").encode())
                 await proc.stdin.drain()
 
@@ -139,6 +144,10 @@ class ACPSubprocessAgent:
             })
 
             # ── 3. Collect streaming output ────────────────────────────────
+            if proc.stdout is None:
+                raise RuntimeError("subprocess stdout is not available")
+
+            done_received = False
             while True:
                 line = await proc.stdout.readline()
                 if not line:
@@ -176,6 +185,7 @@ class ACPSubprocessAgent:
 
                 # Agent signals it is fully done
                 if method == "agents/done":
+                    done_received = True
                     break
 
                 # Final JSON-RPC response to our agents/run request
@@ -225,7 +235,8 @@ class ACPSubprocessAgent:
                     pass
             if proc is not None:
                 try:
-                    proc.stdin.close()
+                    if proc.stdin is not None:
+                        proc.stdin.close()
                     await asyncio.wait_for(proc.wait(), timeout=10.0)
                 except Exception:
                     try:
@@ -233,10 +244,28 @@ class ACPSubprocessAgent:
                     except Exception:
                         pass
 
+        output = "".join(output_parts)
+
+        # If the subprocess exited (EOF) without sending agents/done, treat it as
+        # a failure when the process returncode is a non-zero integer — this
+        # distinguishes a clean early-EOF (returncode 0 or unknown) from a crash.
+        if not done_received:
+            returncode = getattr(proc, "returncode", None)
+            if isinstance(returncode, int) and returncode != 0:
+                return AgentRun(
+                    success=False,
+                    output=(
+                        f"Subprocess exited with code {returncode} without completing."
+                        + (f" Partial output: {output}" if output else "")
+                    ),
+                    turns=turns,
+                    duration_sec=time.monotonic() - start,
+                )
+
         # Text deltas are sequential character sequences — join with no separator.
         return AgentRun(
             success=True,
-            output="".join(output_parts),
+            output=output,
             turns=turns,
             duration_sec=time.monotonic() - start,
         )

@@ -285,7 +285,7 @@ async def test_acp_error_response_returns_failure(tmp_path):
 
 @pytest.mark.asyncio
 async def test_eof_before_done_still_returns_output(tmp_path):
-    """EOF (subprocess exits) before agents/done → still returns collected output."""
+    """EOF (subprocess exits cleanly) before agents/done → still returns collected output."""
     stdout = [
         _init_response(),
         _rpc("agents/textDelta", {"delta": {"type": "text", "text": "partial"}}),
@@ -299,6 +299,25 @@ async def test_eof_before_done_still_returns_output(tmp_path):
 
     assert result.success is True
     assert result.output == "partial"
+
+
+@pytest.mark.asyncio
+async def test_eof_with_nonzero_returncode_returns_failure(tmp_path):
+    """EOF + non-zero returncode → success=False (subprocess crashed)."""
+    stdout = [
+        _init_response(),
+        _rpc("agents/textDelta", {"delta": {"type": "text", "text": "partial"}}),
+        # Subprocess crashes — no agents/done
+    ]
+    proc = _make_proc(stdout)
+    proc.returncode = 1  # non-zero exit code
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+        agent = ACPSubprocessAgent(cmd=["fake-cli"])
+        result = await agent.run(prompt="task", cwd=tmp_path)
+
+    assert result.success is False
+    assert "1" in result.output  # exit code present
 
 
 @pytest.mark.asyncio
