@@ -19,7 +19,9 @@ app = typer.Typer(
 
 DEFAULT_CONFIG_TEMPLATE = """\
 # .specq/config.yaml — team-shared configuration
-changes_dir: changes
+# changes_dir is auto-detected: uses openspec/changes if present, falls back to changes/
+# Uncomment to override:
+# changes_dir: openspec/changes
 base_branch: main
 
 compiler:
@@ -167,17 +169,22 @@ def init():
         local_path.write_text(DEFAULT_LOCAL_CONFIG_TEMPLATE)
         typer.echo(f"  Created {local_path.relative_to(root)}")
 
-    # changes/
-    changes_dir = root / "changes"
-    changes_dir.mkdir(exist_ok=True)
+    # changes/ — skip if openspec/changes already exists
+    from .config import detect_changes_dir
+    detected = detect_changes_dir(root)
+    if detected == "openspec/changes":
+        typer.echo(f"  Detected openspec/changes/ — using it as changes source")
+    else:
+        changes_dir = root / "changes"
+        changes_dir.mkdir(exist_ok=True)
 
-    # Example change
-    example_dir = changes_dir / "000-example"
-    if not example_dir.exists():
-        example_dir.mkdir()
-        (example_dir / "proposal.md").write_text(EXAMPLE_PROPOSAL)
-        (example_dir / "tasks.md").write_text(EXAMPLE_TASKS)
-        typer.echo(f"  Created {example_dir.relative_to(root)}/")
+        # Example change
+        example_dir = changes_dir / "000-example"
+        if not example_dir.exists():
+            example_dir.mkdir()
+            (example_dir / "proposal.md").write_text(EXAMPLE_PROPOSAL)
+            (example_dir / "tasks.md").write_text(EXAMPLE_TASKS)
+            typer.echo(f"  Created {example_dir.relative_to(root)}/")
 
     # .gitignore
     gitignore_path = root / ".gitignore"

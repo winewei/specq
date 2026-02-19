@@ -1,7 +1,7 @@
 """Tests for three-layer config loading and merging."""
 
 import pytest
-from specq.config import load_config, deep_merge
+from specq.config import load_config, deep_merge, detect_changes_dir
 
 
 # --- Three-layer merge ---
@@ -103,3 +103,33 @@ some_future_field: true
 """)
     config = load_config(tmp_project)
     assert config.changes_dir == "changes"
+
+
+# --- OpenSpec auto-detection ---
+
+def test_detect_changes_dir_openspec(tmp_path):
+    """detect_changes_dir returns openspec/changes when directory exists."""
+    (tmp_path / "openspec" / "changes").mkdir(parents=True)
+    assert detect_changes_dir(tmp_path) == "openspec/changes"
+
+
+def test_detect_changes_dir_fallback(tmp_path):
+    """detect_changes_dir falls back to 'changes' when no openspec dir."""
+    assert detect_changes_dir(tmp_path) == "changes"
+
+
+def test_load_config_auto_detects_openspec(tmp_path):
+    """load_config auto-detects openspec/changes when no changes_dir configured."""
+    (tmp_path / ".specq").mkdir()
+    (tmp_path / "openspec" / "changes").mkdir(parents=True)
+    config = load_config(tmp_path)
+    assert config.changes_dir == "openspec/changes"
+
+
+def test_load_config_explicit_changes_dir_overrides_openspec(tmp_path):
+    """Explicit changes_dir in config takes priority over openspec auto-detection."""
+    (tmp_path / ".specq").mkdir()
+    (tmp_path / "openspec" / "changes").mkdir(parents=True)
+    (tmp_path / ".specq" / "config.yaml").write_text("changes_dir: custom/path\n")
+    config = load_config(tmp_path)
+    assert config.changes_dir == "custom/path"

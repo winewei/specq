@@ -59,3 +59,21 @@ def test_config_show(tmp_project, monkeypatch):
     result = runner.invoke(app, ["config"])
     assert result.exit_code == 0
     assert "changes_dir" in result.output
+
+
+def test_init_detects_openspec(tmp_path, monkeypatch):
+    """specq init detects openspec/changes/ and skips creating changes/."""
+    (tmp_path / "openspec" / "changes").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["init"])
+    assert result.exit_code == 0
+    assert not (tmp_path / "changes").exists()
+    assert "openspec/changes" in result.output
+
+
+def test_init_no_openspec_creates_changes(tmp_path, monkeypatch):
+    """specq init creates changes/ when no openspec directory exists."""
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["init"])
+    assert result.exit_code == 0
+    assert (tmp_path / "changes").exists()
