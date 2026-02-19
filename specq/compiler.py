@@ -58,6 +58,26 @@ class PassthroughCompiler:
 
         return "".join(parts)
 
+
+async def _claude_code_chat(system_prompt: str, user_prompt: str, model: str) -> str:
+    """Single-turn text generation via local Claude Code CLI auth (no API key needed)."""
+    from claude_code_sdk import ClaudeCodeOptions, Message, query
+
+    options = ClaudeCodeOptions(
+        model=model,
+        max_turns=1,
+        allowed_tools=[],
+        system_prompt=system_prompt,
+    )
+    parts: list[str] = []
+    async for message in query(prompt=user_prompt, options=options):
+        if isinstance(message, Message):
+            for block in message.content:
+                if hasattr(block, "text"):
+                    parts.append(block.text)
+    return "".join(parts)
+
+
 _SYSTEM_PROMPT = """你是一个 Tech Lead，负责给开发者做任务 briefing。
 根据提供的 proposal、task 列表和上下文，为当前 task 生成精准的执行指令。
 
@@ -134,3 +154,61 @@ class LLMCompiler:
 
         user_prompt = "".join(parts)
         return await self.llm.chat(_SYSTEM_PROMPT, user_prompt)
+
+
+class ClaudeCodeCompiler:
+    """Compiler using local Claude Code CLI auth — no API key required.
+
+    Uses claude_code_sdk.query() with max_turns=1 and no tools, so it behaves
+    as a single-turn text generator authenticated via `claude login`.
+    Configure via: compiler.provider: claude_code
+    """
+
+    def __init__(self, model: str):
+        self.model = model
+
+    async def compile(
+        self,
+        proposal: str,
+        all_tasks: list[str],
+        current_task: TaskItem,
+        prev_results: list[TaskItem],
+        project_rules: str,
+        retry_findings: list[dict] | None,
+    ) -> str:
+        parts = []
+        parts.append("## Proposal\n")
+        parts.append(proposal)
+        parts.append("\n\n## All Tasks\n")
+        for i, t in enumerate(all_tasks, 1):
+            parts.append(f"{i}. {t}\n")
+
+        parts.append(f"\n## Current Task\n")
+        parts.append(f"ID: {current_task.id}\n")
+        parts.append(f"Title: {current_task.title}\n")
+        parts.append(f"Description: {current_task.description}\n")
+
+        if prev_results:
+            parts.append("\n## Previous Task Results\n")
+            for prev in prev_results:
+                files_str = ", ".join(prev.files_changed) if prev.files_changed else "none"
+                parts.append(
+                    f"- {prev.id} ({prev.title}): files={files_str}, commit={prev.commit_hash}\n"
+                )
+
+        if project_rules:
+            parts.append(f"\n## Project Rules (CLAUDE.md)\n{project_rules}\n")
+
+        if retry_findings:
+            parts.append("\n## ⚠️ 上次验收反馈（需修复）\n")
+            for f in retry_findings:
+                parts.append(
+                    f"- [{f.get('severity', 'info')}] {f.get('category', '')}: {f.get('description', '')}\n"
+                )
+
+        user_prompt = "".join(parts)
+        try:
+            return await _claude_code_chat(_SYSTEM_PROMPT, user_prompt, self.model)
+        except Exception:
+            # Fallback to passthrough if SDK unavailable
+            return user_prompt

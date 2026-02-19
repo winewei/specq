@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .aggregator import aggregate_votes
-from .compiler import LLMCompiler, PassthroughCompiler
+from .compiler import ClaudeCodeCompiler, LLMCompiler, PassthroughCompiler
 from .config import Config, get_verification_strategy
 from .dag import build_dag, check_cycle, update_blocked_ready
 from .db import Database
@@ -15,7 +15,7 @@ from .models import Status, VoteResult
 from .notifier import Notifier
 from .scanner import scan_changes
 from .scheduler import pick_next
-from .voter import LLMVoter, run_voters
+from .voter import ClaudeCodeVoter, LLMVoter, run_voters
 
 
 def _read_claude_md(config: Config) -> str:
@@ -30,18 +30,24 @@ def _create_compiler(config: Config):
     provider = config.compiler.provider
     if not provider or provider == "none":
         return PassthroughCompiler()
+    if provider == "claude_code":
+        return ClaudeCodeCompiler(model=config.compiler.model)
     model = config.compiler.model
     api_key = _get_api_key(config, provider)
     return LLMCompiler(provider, model, api_key)
 
 
-def _create_voters(config: Config) -> list[LLMVoter]:
+def _create_voters(config: Config) -> list:
     voters = []
     for v in config.verification.voters:
         provider = v.get("provider", "")
         model = v.get("model", "")
-        api_key = _get_api_key(config, provider)
-        if provider and model:
+        if not provider or not model:
+            continue
+        if provider == "claude_code":
+            voters.append(ClaudeCodeVoter(model=model))
+        else:
+            api_key = _get_api_key(config, provider)
             voters.append(LLMVoter(provider, model, api_key))
     return voters
 

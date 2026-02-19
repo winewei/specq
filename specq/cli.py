@@ -25,25 +25,24 @@ DEFAULT_CONFIG_TEMPLATE = """\
 base_branch: main
 
 # Compiler: synthesizes proposal + task context into an executor brief.
-# provider: none  — passthrough mode, no LLM call (for Claude Code Max plan users)
-# provider: anthropic — requires ANTHROPIC_API_KEY
+# provider: claude_code — uses local claude login (Claude Code Max/Pro, no API key)
+# provider: none        — passthrough, no LLM call at all
+# provider: anthropic   — requires ANTHROPIC_API_KEY
 compiler:
-  provider: none
+  provider: claude_code
+  model: claude-haiku-4-5
 
 executor:
   type: claude_code
   model: claude-sonnet-4-6
   max_turns: 50
 
-# Verification voters: set risk_policy.* to skip to disable entirely.
-# Requires API keys for each provider (not needed with Claude Code Max plan).
+# Verification voters.
+# provider: claude_code — uses local claude login, no API key needed
+# provider: openai/google/anthropic — requires API keys
 verification:
   voters:
-    - provider: openai
-      model: gpt-4o
-    - provider: google
-      model: gemini-2.5-pro
-    - provider: anthropic
+    - provider: claude_code
       model: claude-sonnet-4-6
   checks:
     - spec_compliance
@@ -52,8 +51,10 @@ verification:
 
 risk_policy:
   low: skip
-  medium: skip
-  high: skip
+  medium:
+    strategy: majority
+  high:
+    strategy: unanimous
 
 budgets:
   max_retries: 3

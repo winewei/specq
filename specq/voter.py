@@ -8,6 +8,7 @@ import anyio
 
 from .models import VoteResult
 from .providers import LLMProvider
+from .compiler import _claude_code_chat
 
 _SYSTEM_PROMPT = """你是代码审查员。对比 git diff 和原始 proposal，判断实现是否符合规范。
 
@@ -99,6 +100,53 @@ class LLMVoter:
 
         user_prompt = "".join(parts)
         raw = await self.llm.chat(_SYSTEM_PROMPT, user_prompt)
+        return _parse_vote_response(raw, self.name)
+
+
+class ClaudeCodeVoter:
+    """Voter using local Claude Code CLI auth — no API key required.
+
+    Uses claude_code_sdk.query() with max_turns=1 and no tools.
+    Configure via: verification.voters[].provider: claude_code
+    """
+
+    def __init__(self, model: str):
+        self.model = model
+
+    @property
+    def name(self) -> str:
+        return f"claude_code/{self.model}"
+
+    async def review(
+        self,
+        diff: str,
+        proposal: str,
+        project_rules: str,
+        checks: list[str],
+    ) -> VoteResult:
+        parts = []
+        parts.append("## Git Diff\n```\n")
+        parts.append(diff[:50000])
+        parts.append("\n```\n\n")
+        parts.append(f"## Original Proposal\n{proposal}\n\n")
+        if project_rules:
+            parts.append(f"## Project Rules\n{project_rules}\n\n")
+        if checks:
+            parts.append("## Required Checks\n")
+            for c in checks:
+                parts.append(f"- {c}\n")
+
+        user_prompt = "".join(parts)
+        try:
+            raw = await _claude_code_chat(_SYSTEM_PROMPT, user_prompt, self.model)
+        except Exception as exc:
+            return VoteResult(
+                voter=self.name,
+                verdict="error",
+                confidence=0.0,
+                findings=[],
+                summary=f"ClaudeCodeVoter error: {exc}",
+            )
         return _parse_vote_response(raw, self.name)
 
 

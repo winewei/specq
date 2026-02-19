@@ -2,7 +2,7 @@
 
 import json
 import pytest
-from specq.compiler import LLMCompiler, PassthroughCompiler
+from specq.compiler import ClaudeCodeCompiler, LLMCompiler, PassthroughCompiler
 from specq.models import TaskItem, Status
 
 
@@ -146,6 +146,60 @@ async def test_passthrough_compiler_includes_retry_findings():
         retry_findings=[{"severity": "critical", "category": "spec_compliance", "description": "hardcoded secret"}],
     )
     assert "hardcoded secret" in result
+
+
+@pytest.mark.asyncio
+async def test_claude_code_compiler_no_api_call(httpx_mock):
+    """ClaudeCodeCompiler uses local CLI auth, not direct HTTP to Anthropic."""
+    from unittest.mock import AsyncMock, patch
+
+    with patch("specq.compiler._claude_code_chat", new=AsyncMock(return_value="compiled brief")):
+        compiler = ClaudeCodeCompiler(model="claude-haiku-4-5")
+        result = await compiler.compile(
+            proposal="# Add Auth",
+            all_tasks=["JWT Service"],
+            current_task=TaskItem(id="task-1", title="JWT Service", description="impl"),
+            prev_results=[],
+            project_rules="",
+            retry_findings=None,
+        )
+
+    assert httpx_mock.get_requests() == []
+    assert result == "compiled brief"
+
+
+@pytest.mark.asyncio
+async def test_claude_code_compiler_fallback_on_sdk_error():
+    """ClaudeCodeCompiler falls back to raw prompt when SDK unavailable."""
+    from unittest.mock import AsyncMock, patch
+
+    with patch("specq.compiler._claude_code_chat", new=AsyncMock(side_effect=ImportError("no sdk"))):
+        compiler = ClaudeCodeCompiler(model="claude-haiku-4-5")
+        result = await compiler.compile(
+            proposal="# Auth\nUse PyJWT.",
+            all_tasks=["task-1"],
+            current_task=TaskItem(id="task-1", title="JWT", description="do it"),
+            prev_results=[],
+            project_rules="",
+            retry_findings=None,
+        )
+
+    assert "Auth" in result  # fallback returns raw prompt
+
+
+@pytest.mark.asyncio
+async def test_pipeline_creates_claude_code_compiler(tmp_project):
+    """_create_compiler returns ClaudeCodeCompiler when provider is claude_code."""
+    from specq.config import load_config
+    from specq.pipeline import _create_compiler
+
+    (tmp_project / ".specq" / "config.yaml").write_text(
+        "compiler:\n  provider: claude_code\n  model: claude-haiku-4-5\n"
+    )
+    config = load_config(tmp_project)
+    compiler = _create_compiler(config)
+    assert isinstance(compiler, ClaudeCodeCompiler)
+    assert compiler.model == "claude-haiku-4-5"
 
 
 @pytest.mark.asyncio

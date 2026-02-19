@@ -3,7 +3,7 @@
 import json
 import httpx as httpx_lib
 import pytest
-from specq.voter import LLMVoter, run_voters
+from specq.voter import ClaudeCodeVoter, LLMVoter, run_voters
 
 
 # --- JSON vote parsing ---
@@ -120,3 +120,52 @@ async def test_voter_passes_checks_to_prompt(httpx_mock):
     user_msg = next(m["content"] for m in body["messages"] if m["role"] == "user")
     assert "spec_compliance" in user_msg
     assert "architecture" in user_msg
+
+
+# --- ClaudeCodeVoter ---
+
+@pytest.mark.asyncio
+async def test_claude_code_voter_no_api_call(httpx_mock):
+    """ClaudeCodeVoter uses local CLI auth, not HTTP to LLM providers."""
+    from unittest.mock import AsyncMock, patch
+
+    raw = json.dumps({"verdict": "pass", "confidence": 0.9, "findings": [], "summary": "ok"})
+    with patch("specq.voter._claude_code_chat", new=AsyncMock(return_value=raw)):
+        voter = ClaudeCodeVoter(model="claude-sonnet-4-6")
+        result = await voter.review(diff="...", proposal="...", project_rules="", checks=[])
+
+    assert httpx_mock.get_requests() == []
+    assert result.verdict == "pass"
+    assert result.voter == "claude_code/claude-sonnet-4-6"
+
+
+@pytest.mark.asyncio
+async def test_claude_code_voter_sdk_error_returns_error_verdict():
+    """ClaudeCodeVoter SDK failure returns error verdict (does not raise)."""
+    from unittest.mock import AsyncMock, patch
+
+    with patch("specq.voter._claude_code_chat", new=AsyncMock(side_effect=RuntimeError("no auth"))):
+        voter = ClaudeCodeVoter(model="claude-sonnet-4-6")
+        result = await voter.review(diff="...", proposal="...", project_rules="", checks=[])
+
+    assert result.verdict == "error"
+    assert "no auth" in result.summary
+
+
+@pytest.mark.asyncio
+async def test_pipeline_creates_claude_code_voter(tmp_project):
+    """_create_voters returns ClaudeCodeVoter when provider is claude_code."""
+    from specq.config import load_config
+    from specq.pipeline import _create_voters
+
+    (tmp_project / ".specq" / "config.yaml").write_text("""\
+verification:
+  voters:
+    - provider: claude_code
+      model: claude-sonnet-4-6
+""")
+    config = load_config(tmp_project)
+    voters = _create_voters(config)
+    assert len(voters) == 1
+    assert isinstance(voters[0], ClaudeCodeVoter)
+    assert voters[0].model == "claude-sonnet-4-6"
