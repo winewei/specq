@@ -1,0 +1,105 @@
+# ============================================================================
+# SpecQ Configuration — Claude Code Max Plan Only
+# ============================================================================
+#
+# Subscription: Claude Code Max Plan (claude login)
+# Available models: claude-opus-4-5, claude-opus-4-6,
+#                   claude-sonnet-4-5, claude-sonnet-4-6
+#
+# Key: All components use "claude_code" provider, authenticated via CLI login.
+#      No API key required.
+#
+# Usage:
+#   cp docs/config-examples/claude-max-only.yaml .specq/config.yaml
+# ============================================================================
+
+base_branch: main
+
+# ---------------------------------------------------------------------------
+# Compiler — Generates focused task briefs from proposal + context
+# ---------------------------------------------------------------------------
+# Uses a lightweight model for fast, cheap compilation.
+# claude_code provider = Claude Code SDK (CLI auth, no API key).
+compiler:
+  provider: claude_code
+  model: claude-sonnet-4-5          # Fast & cheap for brief generation
+  # Alternatives:
+  #   model: claude-sonnet-4-6      # Latest Sonnet, slightly better reasoning
+  #   provider: none                # Skip LLM compilation, use raw context
+
+# ---------------------------------------------------------------------------
+# Executor — The coding agent that implements each task
+# ---------------------------------------------------------------------------
+# Uses a powerful model for complex code generation.
+# claude_code type = Claude Code SDK multi-turn agent.
+executor:
+  type: claude_code
+  model: claude-sonnet-4-5          # Good balance of speed and capability
+  max_turns: 50
+  allowed_tools:
+    - Bash
+    - Read
+    - Write
+    - Edit
+    - Glob
+    - Grep
+    - TodoRead
+    - TodoWrite
+    - Task                          # Sub-agents for parallel work
+    - Skill                         # Project-level slash commands
+  # Alternatives:
+  #   model: claude-opus-4-5        # Most capable, best for complex tasks
+  #   model: claude-opus-4-6        # Latest Opus, top-tier reasoning
+  #   model: claude-sonnet-4-6      # Latest Sonnet, fast + capable
+
+# ---------------------------------------------------------------------------
+# Verification — Multi-model code review voting
+# ---------------------------------------------------------------------------
+# With only Claude Max Plan, all voters use claude_code provider.
+# Use different models for diverse review perspectives.
+verification:
+  voters:
+    - provider: claude_code
+      model: claude-opus-4-6        # Primary reviewer — strongest reasoning
+    - provider: claude_code
+      model: claude-sonnet-4-6      # Secondary reviewer — fast, different perspective
+  checks:
+    - spec_compliance               # Does the code match the spec?
+    - regression_risk               # Could this break existing functionality?
+    - architecture                  # Is the design sound?
+
+# ---------------------------------------------------------------------------
+# Risk Policy — Verification strategy per risk level
+# ---------------------------------------------------------------------------
+risk_policy:
+  low: skip                         # Auto-approve, no review needed
+  medium:
+    strategy: majority              # >50% voters must pass
+  high:
+    strategy: unanimous             # All voters must pass + manual confirm
+
+# ---------------------------------------------------------------------------
+# Budgets — Resource limits
+# ---------------------------------------------------------------------------
+budgets:
+  max_retries: 3
+  max_duration_sec: 600             # 10 minutes per task
+  max_turns: 50
+  daily_task_limit: 50
+
+# ---------------------------------------------------------------------------
+# Per-Change Overrides (in proposal.md frontmatter)
+# ---------------------------------------------------------------------------
+# You can override executor model per change for cost optimization:
+#
+#   ---
+#   executor_model: claude-opus-4-6       # Use Opus for this complex change
+#   max_turns: 100                        # Allow more turns
+#   verification:
+#     strategy: unanimous                 # Require all voters to pass
+#   ---
+#
+# Cost optimization strategy:
+#   - Simple changes (low risk):  sonnet-4-5 executor, skip verification
+#   - Medium changes:             sonnet-4-6 executor, majority vote
+#   - Complex changes (high risk): opus-4-6 executor, unanimous vote

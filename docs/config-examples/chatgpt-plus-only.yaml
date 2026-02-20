@@ -1,0 +1,120 @@
+# ============================================================================
+# SpecQ Configuration — ChatGPT Plus (Codex CLI) Only
+# ============================================================================
+#
+# Subscription: ChatGPT Plus (with Codex CLI access)
+# Available models: gpt-5.2, gpt-5.3
+# CLI tool: codex (https://github.com/openai/codex)
+#
+# Key: Executor uses Codex CLI via ACP protocol.
+#      Compiler uses passthrough (no LLM) since no Anthropic API available.
+#      Voters are limited — consider skip or single-voter strategy.
+#
+# Prerequisites:
+#   1. Install Codex CLI: npm install -g @openai/codex
+#   2. Authenticate: codex login
+#
+# Usage:
+#   cp docs/config-examples/chatgpt-plus-only.yaml .specq/config.yaml
+# ============================================================================
+
+base_branch: main
+
+# ---------------------------------------------------------------------------
+# Compiler — Brief generation
+# ---------------------------------------------------------------------------
+# "none" = PassthroughCompiler: formats proposal + context into a structured
+# brief without an LLM call. Works well when tasks.md is already detailed.
+compiler:
+  provider: none                    # No LLM compilation — passthrough mode
+
+# ---------------------------------------------------------------------------
+# Executor — The coding agent that implements each task
+# ---------------------------------------------------------------------------
+# Uses Codex CLI via ACP (Agent Client Protocol) over stdin/stdout.
+# Codex CLI is authenticated via `codex login` (ChatGPT Plus subscription).
+executor:
+  type: codex
+  model: gpt-5.3                    # Latest GPT model
+  max_turns: 50
+  # Note: allowed_tools is not passed to Codex CLI — tool access is managed
+  # by the CLI itself. The setting here is ignored for codex executor type.
+  # Alternatives:
+  #   model: gpt-5.2               # Previous generation, faster
+
+# ---------------------------------------------------------------------------
+# Verification — Code review voting
+# ---------------------------------------------------------------------------
+# With only ChatGPT Plus, verification options are limited:
+#
+# Option A: Skip verification entirely (recommended for solo development)
+# Option B: Use OpenAI API if you have an API key (separate from Plus)
+#
+# Option A — Skip verification:
+verification:
+  voters: []                        # No voters configured
+  checks:
+    - spec_compliance
+    - regression_risk
+    - architecture
+
+# Option B — If you also have an OpenAI API key (uncomment below):
+# verification:
+#   voters:
+#     - provider: openai
+#       model: gpt-5.3
+#     - provider: openai
+#       model: gpt-5.2             # Different model for diverse perspective
+#   checks:
+#     - spec_compliance
+#     - regression_risk
+#     - architecture
+
+# ---------------------------------------------------------------------------
+# Risk Policy
+# ---------------------------------------------------------------------------
+# Without voters, recommend skip for all risk levels.
+# If you enable voters (Option B), restore standard policy.
+risk_policy:
+  low: skip
+  medium: skip                      # No voters → skip all verification
+  high: skip                        # Change to "unanimous" if voters enabled
+  # With voters enabled:
+  # medium:
+  #   strategy: majority
+  # high:
+  #   strategy: unanimous
+
+# ---------------------------------------------------------------------------
+# Budgets
+# ---------------------------------------------------------------------------
+budgets:
+  max_retries: 3
+  max_duration_sec: 600
+  max_turns: 50
+  daily_task_limit: 50
+
+# ---------------------------------------------------------------------------
+# Providers — API Keys (only needed for verification voters)
+# ---------------------------------------------------------------------------
+# If using OpenAI API for voters, set your key here or via environment:
+#   export OPENAI_API_KEY=sk-...
+#
+# providers:
+#   openai:
+#     api_key: ""                   # Or set OPENAI_API_KEY env var
+
+# ---------------------------------------------------------------------------
+# Per-Change Overrides (in proposal.md frontmatter)
+# ---------------------------------------------------------------------------
+# Override model per change:
+#
+#   ---
+#   executor_model: gpt-5.2          # Use older model for simple tasks
+#   max_turns: 100
+#   ---
+#
+# Tips for Codex-only workflow:
+#   - Write detailed tasks.md since compiler is passthrough (no LLM refinement)
+#   - Use CLAUDE.md for project rules — it's injected into every task brief
+#   - Consider adding manual review for high-risk changes

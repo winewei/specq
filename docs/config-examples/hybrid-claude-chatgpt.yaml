@@ -1,0 +1,147 @@
+# ============================================================================
+# SpecQ Configuration — Hybrid: Claude Code Max + ChatGPT Plus
+# ============================================================================
+#
+# Subscriptions:
+#   - Claude Code Max Plan (claude login)
+#     Models: claude-opus-4-5, claude-opus-4-6, claude-sonnet-4-5, claude-sonnet-4-6
+#   - ChatGPT Plus (codex login)
+#     Models: gpt-5.2, gpt-5.3
+#
+# Strategy: Use Claude for compilation & review, flexible executor choice,
+#           cross-vendor voting for maximum review diversity.
+#
+# Prerequisites:
+#   1. claude login (Claude Code Max)
+#   2. npm install -g @openai/codex && codex login (ChatGPT Plus)
+#
+# Usage:
+#   cp docs/config-examples/hybrid-claude-chatgpt.yaml .specq/config.yaml
+# ============================================================================
+
+base_branch: main
+
+# ---------------------------------------------------------------------------
+# Compiler — Task brief generation
+# ---------------------------------------------------------------------------
+# Use Claude's fast model for intelligent brief compilation.
+# claude_code provider uses CLI auth — no API key needed.
+compiler:
+  provider: claude_code
+  model: claude-sonnet-4-5          # Fast, good at summarization
+  # Alternatives:
+  #   model: claude-sonnet-4-6      # Latest Sonnet
+  #   provider: none                # Skip LLM compilation if briefs not needed
+
+# ---------------------------------------------------------------------------
+# Executor — Default coding agent
+# ---------------------------------------------------------------------------
+# Default executor for all changes. Individual changes can override via
+# frontmatter (executor_type / executor_model).
+#
+# Recommended: Use Claude as default, override to Codex for specific changes.
+executor:
+  type: claude_code
+  model: claude-sonnet-4-6          # Latest Sonnet — good default
+  max_turns: 50
+  allowed_tools:
+    - Bash
+    - Read
+    - Write
+    - Edit
+    - Glob
+    - Grep
+    - TodoRead
+    - TodoWrite
+    - Task
+    - Skill
+  # Alternatives for default executor:
+  #   type: codex                   # Use Codex as default instead
+  #   model: gpt-5.3
+
+# ---------------------------------------------------------------------------
+# Verification — Cross-vendor voting for maximum diversity
+# ---------------------------------------------------------------------------
+# Best practice: Use models from DIFFERENT vendors for independent review.
+# This prevents shared biases within a single model family.
+verification:
+  voters:
+    - provider: claude_code
+      model: claude-opus-4-6        # Strongest Claude reasoning
+    - provider: claude_code
+      model: claude-sonnet-4-6      # Fast Claude reviewer
+    # If you have an OpenAI API key, add GPT voters for cross-vendor diversity:
+    # - provider: openai
+    #   model: gpt-5.3
+  checks:
+    - spec_compliance
+    - regression_risk
+    - architecture
+
+# ---------------------------------------------------------------------------
+# Risk Policy
+# ---------------------------------------------------------------------------
+risk_policy:
+  low: skip
+  medium:
+    strategy: majority
+  high:
+    strategy: unanimous
+
+# ---------------------------------------------------------------------------
+# Budgets
+# ---------------------------------------------------------------------------
+budgets:
+  max_retries: 3
+  max_duration_sec: 600
+  max_turns: 50
+  daily_task_limit: 50
+
+# ---------------------------------------------------------------------------
+# Providers — API Keys (optional, for HTTP-based voters)
+# ---------------------------------------------------------------------------
+# Only needed if using OpenAI API for voters (not required for claude_code
+# or codex executor, which use CLI auth).
+#
+# providers:
+#   openai:
+#     api_key: ""                   # Or set OPENAI_API_KEY env var
+
+# ============================================================================
+# Per-Change Executor Override Examples
+# ============================================================================
+#
+# The hybrid setup shines when you use per-change overrides in proposal.md
+# frontmatter to pick the best executor for each task:
+#
+# Example 1: Use Opus for a complex architectural change
+#   ---
+#   executor_model: claude-opus-4-6
+#   max_turns: 100
+#   risk: high
+#   ---
+#
+# Example 2: Use Codex for a Python-heavy data pipeline change
+#   ---
+#   executor_type: codex
+#   executor_model: gpt-5.3
+#   risk: medium
+#   ---
+#
+# Example 3: Use fast Sonnet for a simple config change
+#   ---
+#   executor_model: claude-sonnet-4-5
+#   risk: low
+#   ---
+#
+# ============================================================================
+# Recommended Per-Change Model Selection Guide
+# ============================================================================
+#
+# | Change Complexity | Executor              | Compiler         | Verification |
+# |-------------------|-----------------------|------------------|--------------|
+# | Simple / Low risk | claude-sonnet-4-5     | claude_code none | skip         |
+# | Medium            | claude-sonnet-4-6     | claude-sonnet-4-5| majority     |
+# | Complex / High    | claude-opus-4-6       | claude-sonnet-4-5| unanimous    |
+# | Python-heavy      | codex / gpt-5.3       | claude-sonnet-4-5| majority     |
+# | Multi-language     | claude-opus-4-6       | claude-sonnet-4-5| unanimous    |
