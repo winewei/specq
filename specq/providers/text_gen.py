@@ -1,6 +1,8 @@
-"""TextGen: single-turn text generation — HTTP providers and Claude Code SDK."""
+"""TextGen: single-turn text generation — HTTP providers, Claude Code SDK, and ACP CLIs."""
 
 from __future__ import annotations
+
+from pathlib import Path
 
 import anyio
 import httpx
@@ -134,3 +136,75 @@ class ClaudeCodeTextGen:
                     if hasattr(block, "text"):
                         parts.append(block.text)
         return "".join(parts)
+
+
+class ACPTextGen:
+    """Single-turn text generation via ACP CLI subprocess — no API key needed.
+
+    Reuses :class:`~specq.providers.acp_agent.ACPSubprocessAgent` with
+    ``auto_approve_permissions=False`` so the CLI produces a pure text
+    response without invoking any tools.
+
+    This is the ACP equivalent of :class:`ClaudeCodeTextGen`: it turns a
+    multi-turn coding agent CLI into a single-turn text generator
+    authenticated via the CLI's own login mechanism.
+    """
+
+    def __init__(self, agent):
+        self._agent = agent
+
+    async def chat(self, system: str, user: str) -> str:
+        result = await self._agent.run(
+            prompt=user,
+            cwd=Path.cwd(),
+            system_prompt=system,
+        )
+        if not result.success:
+            raise RuntimeError(f"ACP text generation failed: {result.output}")
+        return result.output
+
+
+class GeminiCLITextGen(ACPTextGen):
+    """Text generation via Gemini CLI auth — no API key needed.
+
+    Requires: ``gemini`` CLI installed and authenticated (``gemini login``).
+
+    Configure in ``.specq/config.yaml``::
+
+        compiler:
+          provider: gemini_cli
+          model: gemini-2.5-pro
+    """
+
+    def __init__(self, model: str = ""):
+        from .acp_agent import GeminiCLIAgent
+
+        agent = GeminiCLIAgent(
+            model=model,
+            max_turns=1,
+            auto_approve_permissions=False,
+        )
+        super().__init__(agent)
+
+
+class CodexTextGen(ACPTextGen):
+    """Text generation via Codex CLI auth — no API key needed.
+
+    Requires: ``codex`` CLI installed and authenticated (``codex login``).
+
+    Configure in ``.specq/config.yaml``::
+
+        compiler:
+          provider: codex
+          model: gpt-5.3
+    """
+
+    def __init__(self, model: str = ""):
+        from .acp_agent import CodexAgent
+
+        agent = CodexAgent(
+            model=model,
+            max_turns=1,
+            auto_approve_permissions=False,
+        )
+        super().__init__(agent)

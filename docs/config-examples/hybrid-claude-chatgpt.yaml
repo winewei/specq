@@ -64,15 +64,13 @@ executor:
 # ---------------------------------------------------------------------------
 # Best practice: Use models from DIFFERENT vendors for independent review.
 # This prevents shared biases within a single model family.
+# Both claude_code and codex voters use CLI auth — no API keys needed.
 verification:
   voters:
     - provider: claude_code
       model: claude-opus-4-6        # Strongest Claude reasoning
-    - provider: claude_code
-      model: claude-sonnet-4-6      # Fast Claude reviewer
-    # If you have an OpenAI API key, add GPT voters for cross-vendor diversity:
-    # - provider: openai
-    #   model: gpt-5.3
+    - provider: codex
+      model: gpt-5.3               # Cross-vendor perspective via Codex CLI
   checks:
     - spec_compliance
     - regression_risk
@@ -100,8 +98,8 @@ budgets:
 # ---------------------------------------------------------------------------
 # Providers — API Keys (optional, for HTTP-based voters)
 # ---------------------------------------------------------------------------
-# Only needed if using OpenAI API for voters (not required for claude_code
-# or codex executor, which use CLI auth).
+# Not needed when using CLI-based providers (claude_code, codex, gemini_cli).
+# Only required for HTTP API providers (anthropic, openai, google, etc.).
 #
 # providers:
 #   openai:

@@ -16,6 +16,7 @@ from .notifier import Notifier
 from .providers import (
     ClaudeCodeAgent, ClaudeCodeTextGen, HttpTextGen,
     GeminiCLIAgent, CodexAgent,
+    GeminiCLITextGen, CodexTextGen,
 )
 from .scanner import scan_changes
 from .scheduler import pick_next
@@ -45,9 +46,18 @@ def _get_api_key(config: Config, provider: str) -> str:
 
 
 def _make_text_gen(config: Config, provider: str, model: str):
-    """Construct the appropriate TextGen object for a given provider."""
+    """Construct the appropriate TextGen object for a given provider.
+
+    CLI-based providers (claude_code, gemini_cli, codex) use local CLI auth
+    and do not require an API key.  All other providers fall through to
+    :class:`HttpTextGen` which needs an API key.
+    """
     if provider == "claude_code":
         return ClaudeCodeTextGen(model=model)
+    if provider == "gemini_cli":
+        return GeminiCLITextGen(model=model)
+    if provider == "codex":
+        return CodexTextGen(model=model)
     api_key = _get_api_key(config, provider)
     return HttpTextGen(provider=provider, model=model, api_key=api_key)
 
