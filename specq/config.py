@@ -23,6 +23,8 @@ class ProvidersConfig:
     anthropic: ProviderCreds = field(default_factory=ProviderCreds)
     openai: ProviderCreds = field(default_factory=ProviderCreds)
     google: ProviderCreds = field(default_factory=ProviderCreds)
+    glm: ProviderCreds = field(default_factory=ProviderCreds)
+    deepseek: ProviderCreds = field(default_factory=ProviderCreds)
 
 
 @dataclass
@@ -36,6 +38,16 @@ class ExecutorConfig:
     type: str = "claude_code"
     model: str = "claude-sonnet-4-5"
     max_turns: int = 50
+    allowed_tools: list[str] = field(default_factory=lambda: [
+        # File operations
+        "Bash", "Read", "Write", "Edit", "Glob", "Grep",
+        # Task tracking
+        "TodoRead", "TodoWrite",
+        # Sub-agents — lets Claude Code spawn parallel worker agents
+        "Task",
+        # Skills — lets Claude Code invoke project-level slash-command skills
+        "Skill",
+    ])
 
 
 @dataclass
@@ -172,6 +184,7 @@ def _dict_to_config(data: dict, project_root: str) -> Config:
             type=e.get("type", cfg.executor.type),
             model=e.get("model", cfg.executor.model),
             max_turns=e.get("max_turns", cfg.executor.max_turns),
+            allowed_tools=e.get("allowed_tools", cfg.executor.allowed_tools),
         )
 
     if "verification" in data and isinstance(data["verification"], dict):
@@ -206,6 +219,8 @@ def _dict_to_config(data: dict, project_root: str) -> Config:
             anthropic=ProviderCreds(api_key=p.get("anthropic", {}).get("api_key", "")),
             openai=ProviderCreds(api_key=p.get("openai", {}).get("api_key", "")),
             google=ProviderCreds(api_key=p.get("google", {}).get("api_key", "")),
+            glm=ProviderCreds(api_key=p.get("glm", {}).get("api_key", "")),
+            deepseek=ProviderCreds(api_key=p.get("deepseek", {}).get("api_key", "")),
         )
 
     return cfg
@@ -269,13 +284,21 @@ def load_config(project_root: str | Path) -> Config:
     if env_google:
         cfg.providers.google.api_key = env_google
 
+    env_glm = os.environ.get("GLM_API_KEY")
+    if env_glm:
+        cfg.providers.glm.api_key = env_glm
+
+    env_deepseek = os.environ.get("DEEPSEEK_API_KEY")
+    if env_deepseek:
+        cfg.providers.deepseek.api_key = env_deepseek
+
     return cfg
 
 
 def get_verification_strategy(work_item, config: Config) -> str:
     """Resolve verification strategy for a work item based on risk policy."""
     risk = work_item.risk
-    if work_item.verification_strategy and work_item.verification_strategy != "majority":
+    if work_item.verification_strategy:  # non-empty → explicit per-change override
         return work_item.verification_strategy
 
     rp = config.risk_policy

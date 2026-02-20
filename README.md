@@ -18,7 +18,7 @@
 ⑤ Compiler    LLM 精炼 proposal 为 task brief
 ⑥ Executor    Claude Code SDK → 实现 + lint + test → commit
 ⑦ Voters      httpx → N 个模型并行独立投票
-⑧ Aggregate   risk_policy 汇总 → approved / rejected / needs_review
+⑧ Aggregate   risk_policy 汇总 → accepted / rejected / needs_review
 ⑨ Complete    通过 → 解锁下游 → re-scan
               拒绝 → findings → Compiler 重编译 → 重试
 ```
@@ -186,12 +186,13 @@ budgets:
 pending → blocked → ready → compiling → running → verifying
                                                       │
                                         ┌─────────────┤
-                                   approved       rejected
-                                      │          retry < max?
-                                 ┌────┴────┐        │
-                                auto   high risk    └→ ready (重试)
-                                 │        │
-                            accepted  needs_review ──→ accepted (人工确认)
+                                     pass           fail
+                                        │          retry < max?
+                                   ┌────┴────┐        │
+                               skip/auto  needs_review └→ ready (重试)
+                                   │        │        retry ≥ max?
+                               accepted  accepted      └→ failed
+                                        (人工确认)
 ```
 
 ## 风险策略

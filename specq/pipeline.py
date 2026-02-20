@@ -5,17 +5,21 @@ from __future__ import annotations
 from pathlib import Path
 
 from .aggregator import aggregate_votes
-from .compiler import LLMCompiler
+from .compiler import Compiler, PassthroughCompiler
 from .config import Config, get_verification_strategy
 from .dag import build_dag, check_cycle, update_blocked_ready
 from .db import Database
-from .executor import ClaudeCodeExecutor
+from .executor import Executor
 from .git_ops import get_change_diff
 from .models import Status, VoteResult
 from .notifier import Notifier
+from .providers import (
+    ClaudeCodeAgent, ClaudeCodeTextGen, HttpTextGen,
+    GeminiCLIAgent, CodexAgent,
+)
 from .scanner import scan_changes
 from .scheduler import pick_next
-from .voter import LLMVoter, run_voters
+from .voter import Voter, run_voters
 
 
 def _read_claude_md(config: Config) -> str:
@@ -26,24 +30,6 @@ def _read_claude_md(config: Config) -> str:
     return ""
 
 
-def _create_compiler(config: Config) -> LLMCompiler:
-    provider = config.compiler.provider
-    model = config.compiler.model
-    api_key = _get_api_key(config, provider)
-    return LLMCompiler(provider, model, api_key)
-
-
-def _create_voters(config: Config) -> list[LLMVoter]:
-    voters = []
-    for v in config.verification.voters:
-        provider = v.get("provider", "")
-        model = v.get("model", "")
-        api_key = _get_api_key(config, provider)
-        if provider and model:
-            voters.append(LLMVoter(provider, model, api_key))
-    return voters
-
-
 def _get_api_key(config: Config, provider: str) -> str:
     if provider == "anthropic":
         return config.providers.anthropic.api_key
@@ -51,7 +37,64 @@ def _get_api_key(config: Config, provider: str) -> str:
         return config.providers.openai.api_key
     elif provider == "google":
         return config.providers.google.api_key
+    elif provider == "glm":
+        return config.providers.glm.api_key
+    elif provider == "deepseek":
+        return config.providers.deepseek.api_key
     return ""
+
+
+def _make_text_gen(config: Config, provider: str, model: str):
+    """Construct the appropriate TextGen object for a given provider."""
+    if provider == "claude_code":
+        return ClaudeCodeTextGen(model=model)
+    api_key = _get_api_key(config, provider)
+    return HttpTextGen(provider=provider, model=model, api_key=api_key)
+
+
+def _create_compiler(config: Config):
+    provider = config.compiler.provider
+    if not provider or provider == "none":
+        return PassthroughCompiler()
+    text_gen = _make_text_gen(config, provider, config.compiler.model)
+    fallback = provider == "claude_code"
+    return Compiler(text_gen=text_gen, fallback_on_error=fallback)
+
+
+def _create_voters_for_item(config: Config, work_item) -> list[Voter]:
+    voter_configs = work_item.voters or config.verification.voters
+    voters = []
+    for v in voter_configs:
+        provider = v.get("provider", "")
+        model = v.get("model", "")
+        if not provider or not model:
+            continue
+        text_gen = _make_text_gen(config, provider, model)
+        name = f"{provider}/{model}"
+        voters.append(Voter(name=name, text_gen=text_gen))
+    return voters
+
+
+def _create_executor_for_item(config: Config, work_item) -> Executor:
+    agent_type = work_item.executor_type or config.executor.type
+    model = work_item.executor_model or config.executor.model
+    max_turns = work_item.executor_max_turns or config.executor.max_turns
+    # Per-change tools override global config; both fall back to ExecutorConfig default
+    allowed_tools = work_item.executor_tools or config.executor.allowed_tools
+
+    if agent_type == "gemini_cli":
+        agent = GeminiCLIAgent(model=model, max_turns=max_turns)
+    elif agent_type == "codex":
+        agent = CodexAgent(model=model, max_turns=max_turns)
+    else:
+        # Default: claude_code — pass allowed_tools so sub-agents / skills are opt-in
+        agent = ClaudeCodeAgent(
+            model=model,
+            max_turns=max_turns,
+            allowed_tools=allowed_tools,
+            system_prompt="",  # overridden per-run in Executor.execute()
+        )
+    return Executor(agent=agent)
 
 
 async def run_pipeline(
@@ -61,10 +104,6 @@ async def run_pipeline(
 ) -> None:
     """Core execution loop."""
     compiler = _create_compiler(config)
-    executor = ClaudeCodeExecutor(
-        model=config.executor.model,
-        max_turns=config.executor.max_turns,
-    )
     notifier = Notifier(
         webhook_url=config.notify.webhook_url,
         events=config.notify.events,
@@ -102,6 +141,8 @@ async def run_pipeline(
         next_item = pick_next(work_items, target_id)
         if next_item is None:
             break
+
+        executor = _create_executor_for_item(config, next_item)
 
         # ④ Execute all tasks in the change serially
         for task in next_item.tasks:
@@ -166,7 +207,7 @@ async def run_pipeline(
                 Path(config.project_root), config.base_branch
             )
 
-            voters = _create_voters(config)
+            voters = _create_voters_for_item(config, next_item)
             vote_results = await run_voters(
                 voters=voters,
                 diff=diff,
@@ -203,7 +244,6 @@ async def run_pipeline(
             await db.update_status(next_item.id, Status.NEEDS_REVIEW)
             await db.log_event(next_item.id, "needs_review", {})
             await notifier.notify("change.needs_review", next_item)
-            # In non-interactive mode, stop here for this item
             if target_id:
                 break
         elif decision == "rejected":
@@ -215,7 +255,6 @@ async def run_pipeline(
                     "attempt": next_item.retry_count,
                     "findings": findings,
                 })
-                # Continue loop — will pick up the same item again
                 continue
             else:
                 await db.update_status(next_item.id, Status.FAILED)

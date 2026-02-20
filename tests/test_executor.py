@@ -1,11 +1,13 @@
-"""Tests for executor — Claude Code SDK integration."""
+"""Tests for Executor — domain wrapper around ClaudeCodeAgent."""
 
 import sys
 import types
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from pathlib import Path
-from specq.executor import ClaudeCodeExecutor
+
+from specq.executor import Executor, _DEFAULT_TOOLS
+from specq.providers import ClaudeCodeAgent
 from specq.models import WorkItem, TaskItem
 
 
@@ -39,11 +41,20 @@ def _make_mock_sdk(messages=None, raise_exc=None):
     return mock_sdk
 
 
+def _make_executor(model="claude-sonnet-4-5", max_turns=50) -> Executor:
+    agent = ClaudeCodeAgent(
+        model=model,
+        max_turns=max_turns,
+        allowed_tools=_DEFAULT_TOOLS,
+        system_prompt="",  # overridden per-run by Executor.execute()
+    )
+    return Executor(agent=agent)
+
+
 @pytest.mark.asyncio
 async def test_executor_calls_sdk_with_correct_params():
-    """SDK called with correct model, max_turns, cwd."""
+    """SDK called with correct model, max_turns, cwd, system_prompt."""
     captured = {}
-
     mock_sdk = _make_mock_sdk()
     original_query = mock_sdk.query
 
@@ -58,12 +69,7 @@ async def test_executor_calls_sdk_with_correct_params():
     mock_sdk.query = capturing_query
 
     with patch.dict(sys.modules, {"claude_code_sdk": mock_sdk}):
-        # Force re-import
-        import importlib
-        import specq.executor
-        importlib.reload(specq.executor)
-
-        executor = specq.executor.ClaudeCodeExecutor(model="claude-sonnet-4-5", max_turns=50)
+        executor = _make_executor(model="claude-sonnet-4-5", max_turns=50)
         wi = WorkItem(id="001", change_dir="c/001", title="", description="")
         task = TaskItem(id="task-1", title="JWT", description="")
         with patch.object(executor, "_get_changed_files", new_callable=AsyncMock, return_value=[]):
@@ -86,11 +92,7 @@ async def test_executor_collects_token_usage():
     mock_sdk = _make_mock_sdk(messages=messages)
 
     with patch.dict(sys.modules, {"claude_code_sdk": mock_sdk}):
-        import importlib
-        import specq.executor
-        importlib.reload(specq.executor)
-
-        executor = specq.executor.ClaudeCodeExecutor(model="claude-sonnet-4-5", max_turns=50)
+        executor = _make_executor()
         wi = WorkItem(id="001", change_dir="c/001", title="", description="")
         task = TaskItem(id="task-1", title="JWT", description="")
         with patch.object(executor, "_get_changed_files", new_callable=AsyncMock, return_value=[]):
@@ -108,11 +110,7 @@ async def test_executor_captures_git_state():
     mock_sdk = _make_mock_sdk()
 
     with patch.dict(sys.modules, {"claude_code_sdk": mock_sdk}):
-        import importlib
-        import specq.executor
-        importlib.reload(specq.executor)
-
-        executor = specq.executor.ClaudeCodeExecutor(model="claude-sonnet-4-5", max_turns=50)
+        executor = _make_executor()
         wi = WorkItem(id="001", change_dir="c/001", title="", description="")
         task = TaskItem(id="task-1", title="JWT", description="")
         with patch.object(executor, "_get_changed_files",
@@ -132,11 +130,7 @@ async def test_executor_sdk_error_returns_failure():
     mock_sdk = _make_mock_sdk(raise_exc=RuntimeError("Claude Code crashed"))
 
     with patch.dict(sys.modules, {"claude_code_sdk": mock_sdk}):
-        import importlib
-        import specq.executor
-        importlib.reload(specq.executor)
-
-        executor = specq.executor.ClaudeCodeExecutor(model="claude-sonnet-4-5", max_turns=50)
+        executor = _make_executor()
         wi = WorkItem(id="001", change_dir="c/001", title="", description="")
         task = TaskItem(id="task-1", title="JWT", description="")
         result = await executor.execute(wi, task, Path("/tmp"), "brief")
@@ -159,11 +153,7 @@ async def test_executor_system_prompt_has_commit_format():
     mock_sdk.query = capturing_query
 
     with patch.dict(sys.modules, {"claude_code_sdk": mock_sdk}):
-        import importlib
-        import specq.executor
-        importlib.reload(specq.executor)
-
-        executor = specq.executor.ClaudeCodeExecutor(model="claude-sonnet-4-5", max_turns=50)
+        executor = _make_executor()
         wi = WorkItem(id="001-auth", change_dir="c/001", title="", description="")
         task = TaskItem(id="task-1", title="JWT", description="")
         with patch.object(executor, "_get_changed_files", new_callable=AsyncMock, return_value=[]):

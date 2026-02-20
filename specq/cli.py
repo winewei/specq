@@ -24,23 +24,37 @@ DEFAULT_CONFIG_TEMPLATE = """\
 # changes_dir: openspec/changes
 base_branch: main
 
+# Compiler: synthesizes proposal + task context into an executor brief.
+# provider: claude_code — uses local claude login (Claude Code Max/Pro, no API key)
+# provider: none        — passthrough, no LLM call at all
+# provider: glm         — 智谱 GLM-4-Flash (免费额度), requires GLM_API_KEY
+# provider: deepseek    — DeepSeek (低价), requires DEEPSEEK_API_KEY
+# provider: anthropic   — requires ANTHROPIC_API_KEY
 compiler:
-  provider: anthropic
+  provider: claude_code
   model: claude-haiku-4-5
 
 executor:
+  # type: claude_code   — Claude Code CLI (default; uses local claude login)
+  # type: gemini_cli    — Gemini CLI via ACP (requires 'gemini' CLI + Google auth)
+  # type: codex         — OpenAI Codex CLI via ACP (requires 'codex' CLI + OPENAI_API_KEY)
   type: claude_code
-  model: claude-sonnet-4-5
+  model: claude-sonnet-4-6
   max_turns: 50
 
+# Verification voters.
+# provider: claude_code — uses local claude login, no API key needed
+# provider: glm         — 智谱 GLM-4-Air/GLM-4, requires GLM_API_KEY
+# provider: deepseek    — DeepSeek-R1/V3, requires DEEPSEEK_API_KEY
+# provider: openai/google/anthropic — requires API keys
 verification:
   voters:
-    - provider: openai
-      model: gpt-4o
-    - provider: google
-      model: gemini-2.5-pro
-    - provider: anthropic
-      model: claude-sonnet-4-5
+    - provider: claude_code
+      model: claude-sonnet-4-6
+    # - provider: glm
+    #   model: glm-4-air
+    # - provider: deepseek
+    #   model: deepseek-chat
   checks:
     - spec_compliance
     - regression_risk
@@ -209,7 +223,7 @@ def plan():
     """Show execution plan (dry-run)."""
     root = _get_project_root()
 
-    from .config import load_config
+    from .config import get_verification_strategy, load_config
     from .dag import build_dag, check_cycle, update_blocked_ready
     from .scanner import scan_changes
 
@@ -241,7 +255,7 @@ def plan():
 
     for i, item in enumerate(items, 1):
         deps_str = ", ".join(item.deps) if item.deps else "—"
-        verify = item.verification_strategy
+        verify = get_verification_strategy(item, config)
         status = item.status.value
         typer.echo(
             f"  {i:<3} {item.id:<25} {status:<10} {deps_str:<15} {item.risk:<8} {verify}"
@@ -249,7 +263,7 @@ def plan():
 
     # Executor info
     typer.echo("")
-    typer.echo(f"  Executor: claude-code ({config.executor.model})")
+    typer.echo(f"  Executor: {config.executor.type} ({config.executor.model})")
     typer.echo(f"  Compiler: {config.compiler.model}")
     voters_str = ", ".join(
         v.get("model", "?") for v in config.verification.voters

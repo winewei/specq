@@ -2,16 +2,21 @@
 
 import json
 import pytest
-from specq.compiler import LLMCompiler
+from unittest.mock import AsyncMock, patch
+
+from specq.compiler import Compiler, PassthroughCompiler
+from specq.providers import ClaudeCodeTextGen, HttpTextGen
 from specq.models import TaskItem, Status
 
+
+# --- Compiler(HttpTextGen) ---
 
 @pytest.mark.asyncio
 async def test_compiler_sends_all_context(httpx_mock):
     """Prompt includes proposal + all tasks + project rules."""
     httpx_mock.add_response(json={"content": [{"type": "text", "text": "brief"}]})
 
-    compiler = LLMCompiler("anthropic", "claude-haiku-4-5", "key")
+    compiler = Compiler(HttpTextGen("anthropic", "claude-haiku-4-5", "key"))
     await compiler.compile(
         proposal="# Add Auth\n实现 JWT 认证",
         all_tasks=["JWT Service", "Middleware"],
@@ -40,7 +45,7 @@ async def test_compiler_includes_prev_task_results(httpx_mock):
     prev.files_changed = ["src/auth/jwt.py", "tests/test_jwt.py"]
     prev.commit_hash = "abc123"
 
-    compiler = LLMCompiler("anthropic", "claude-haiku-4-5", "key")
+    compiler = Compiler(HttpTextGen("anthropic", "claude-haiku-4-5", "key"))
     await compiler.compile(
         proposal="# Auth", all_tasks=["task-1", "task-2"],
         current_task=TaskItem(id="task-2", title="Middleware", description=""),
@@ -60,7 +65,7 @@ async def test_compiler_includes_retry_findings(httpx_mock):
     """Retry prompt includes voter findings."""
     httpx_mock.add_response(json={"content": [{"type": "text", "text": "fixed brief"}]})
 
-    compiler = LLMCompiler("anthropic", "claude-haiku-4-5", "key")
+    compiler = Compiler(HttpTextGen("anthropic", "claude-haiku-4-5", "key"))
     await compiler.compile(
         proposal="# Auth", all_tasks=["task-1"],
         current_task=TaskItem(id="task-1", title="JWT", description=""),
@@ -84,7 +89,7 @@ async def test_compiler_no_findings_no_fix_section(httpx_mock):
     """First compile has no retry/fix content."""
     httpx_mock.add_response(json={"content": [{"type": "text", "text": "brief"}]})
 
-    compiler = LLMCompiler("anthropic", "claude-haiku-4-5", "key")
+    compiler = Compiler(HttpTextGen("anthropic", "claude-haiku-4-5", "key"))
     await compiler.compile(
         proposal="# Auth", all_tasks=["t1"],
         current_task=TaskItem(id="t1", title="JWT", description=""),
@@ -96,3 +101,125 @@ async def test_compiler_no_findings_no_fix_section(httpx_mock):
     user_msg = body["messages"][0]["content"]
     assert "修复" not in user_msg
     assert "finding" not in user_msg.lower()
+
+
+# --- PassthroughCompiler ---
+
+@pytest.mark.asyncio
+async def test_passthrough_compiler_no_llm_call(httpx_mock):
+    """PassthroughCompiler never makes an HTTP request."""
+    compiler = PassthroughCompiler()
+    result = await compiler.compile(
+        proposal="# Add Auth\n实现 JWT",
+        all_tasks=["JWT Service", "Middleware"],
+        current_task=TaskItem(id="task-1", title="JWT Service", description="实现 JWT"),
+        prev_results=[],
+        project_rules="",
+        retry_findings=None,
+    )
+    assert httpx_mock.get_requests() == []
+    assert "JWT Service" in result
+    assert "Add Auth" in result
+
+
+@pytest.mark.asyncio
+async def test_passthrough_compiler_includes_proposal_and_rules():
+    """PassthroughCompiler brief contains proposal and project rules."""
+    compiler = PassthroughCompiler()
+    result = await compiler.compile(
+        proposal="# Auth\nUse PyJWT.",
+        all_tasks=["task-1"],
+        current_task=TaskItem(id="task-1", title="JWT", description="implement JWT"),
+        prev_results=[],
+        project_rules="Use PyJWT library.",
+        retry_findings=None,
+    )
+    assert "Auth" in result
+    assert "PyJWT" in result
+
+
+@pytest.mark.asyncio
+async def test_passthrough_compiler_includes_retry_findings():
+    """PassthroughCompiler brief includes retry findings."""
+    compiler = PassthroughCompiler()
+    result = await compiler.compile(
+        proposal="# Auth",
+        all_tasks=["task-1"],
+        current_task=TaskItem(id="task-1", title="JWT", description=""),
+        prev_results=[],
+        project_rules="",
+        retry_findings=[{"severity": "critical", "category": "spec_compliance", "description": "hardcoded secret"}],
+    )
+    assert "hardcoded secret" in result
+
+
+# --- Compiler(ClaudeCodeTextGen) ---
+
+@pytest.mark.asyncio
+async def test_claude_code_compiler_no_api_call(httpx_mock):
+    """Compiler(ClaudeCodeTextGen) uses local CLI auth, not HTTP."""
+    text_gen = ClaudeCodeTextGen(model="claude-haiku-4-5")
+    compiler = Compiler(text_gen, fallback_on_error=True)
+
+    with patch.object(text_gen, "chat", new=AsyncMock(return_value="compiled brief")):
+        result = await compiler.compile(
+            proposal="# Add Auth",
+            all_tasks=["JWT Service"],
+            current_task=TaskItem(id="task-1", title="JWT Service", description="impl"),
+            prev_results=[],
+            project_rules="",
+            retry_findings=None,
+        )
+
+    assert httpx_mock.get_requests() == []
+    assert result == "compiled brief"
+
+
+@pytest.mark.asyncio
+async def test_claude_code_compiler_fallback_on_sdk_error():
+    """Compiler(ClaudeCodeTextGen, fallback_on_error=True) falls back to raw prompt on error."""
+    text_gen = ClaudeCodeTextGen(model="claude-haiku-4-5")
+    compiler = Compiler(text_gen, fallback_on_error=True)
+
+    with patch.object(text_gen, "chat", new=AsyncMock(side_effect=ImportError("no sdk"))):
+        result = await compiler.compile(
+            proposal="# Auth\nUse PyJWT.",
+            all_tasks=["task-1"],
+            current_task=TaskItem(id="task-1", title="JWT", description="do it"),
+            prev_results=[],
+            project_rules="",
+            retry_findings=None,
+        )
+
+    assert "Auth" in result  # fallback returns raw prompt
+
+
+# --- Pipeline factory ---
+
+@pytest.mark.asyncio
+async def test_pipeline_creates_claude_code_compiler(tmp_project):
+    """_create_compiler returns Compiler(ClaudeCodeTextGen) when provider is claude_code."""
+    from specq.config import load_config
+    from specq.pipeline import _create_compiler
+
+    (tmp_project / ".specq" / "config.yaml").write_text(
+        "compiler:\n  provider: claude_code\n  model: claude-haiku-4-5\n"
+    )
+    config = load_config(tmp_project)
+    compiler = _create_compiler(config)
+    assert isinstance(compiler, Compiler)
+    assert isinstance(compiler.text_gen, ClaudeCodeTextGen)
+    assert compiler.text_gen.model == "claude-haiku-4-5"
+    assert compiler.fallback_on_error is True
+
+
+@pytest.mark.asyncio
+async def test_pipeline_uses_passthrough_when_provider_none(tmp_project, monkeypatch):
+    """_create_compiler returns PassthroughCompiler when provider is none."""
+    from specq.config import load_config
+    from specq.pipeline import _create_compiler
+
+    (tmp_project / ".specq" / "config.yaml").write_text("compiler:\n  provider: none\n")
+    config = load_config(tmp_project)
+    compiler = _create_compiler(config)
+    assert isinstance(compiler, PassthroughCompiler)

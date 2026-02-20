@@ -7,14 +7,14 @@ from specq.models import Status, WorkItem, TaskItem, VoteResult, ExecutionResult
 # --- Status enum completeness ---
 
 def test_status_enum_completeness():
-    """12 statuses exist with correct values."""
+    """11 statuses exist with correct values."""
     expected = [
         "pending", "blocked", "ready", "compiling", "running",
-        "verifying", "approved", "needs_review", "accepted",
+        "verifying", "needs_review", "accepted",
         "rejected", "failed", "skipped",
     ]
     assert [s.value for s in Status] == expected
-    assert len(Status) == 12
+    assert len(Status) == 11
 
 
 def test_status_is_str_enum():
@@ -42,9 +42,9 @@ def test_work_item_risk_default():
 
 
 def test_work_item_verification_default():
-    """Default verification_strategy = majority."""
+    """Default verification_strategy = "" (resolved via risk_policy at runtime)."""
     wi = WorkItem(id="001", change_dir="c/001", title="t", description="")
-    assert wi.verification_strategy == "majority"
+    assert wi.verification_strategy == ""
 
 
 # --- TaskItem metrics ---

@@ -116,10 +116,14 @@ def _parse_change_dir(
     )
 
     # Per-change overrides from frontmatter
+    if "executor_type" in meta:
+        wi.executor_type = meta["executor_type"]
     if "executor_model" in meta:
         wi.executor_model = meta["executor_model"]
     if "max_turns" in meta:
         wi.executor_max_turns = meta["max_turns"]
+    if "executor_tools" in meta and isinstance(meta["executor_tools"], list):
+        wi.executor_tools = meta["executor_tools"]
     if "verification" in meta and isinstance(meta["verification"], dict):
         wi.verification_strategy = meta["verification"].get(
             "strategy", wi.verification_strategy
